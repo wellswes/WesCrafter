@@ -281,6 +281,46 @@ export default function App() {
                   <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid #1a1410" }}>
                     <div style={{ fontSize: 32, color, fontWeight: "normal" }}>{selectedChar.name}</div>
                     <div style={{ fontSize: 14, color: "#6b5a3e", marginTop: 4 }}>{selectedChar.occupation} · {selectedChar.character_groups?.name}</div>
+<button onClick={() => {
+  const e = selectedChar.character_erotic?.[0] || {}
+  const combat = selectedChar.character_combat?.[0] || {}
+  const text = [
+    "NAME: " + selectedChar.name,
+    "AGE: " + (selectedChar.age || "—") + " | PRONOUNS: " + (selectedChar.pronouns || "—") + " | SPECIES: " + (selectedChar.species || "—"),
+    "OCCUPATION: " + (selectedChar.occupation || "—") + " | GROUP: " + (selectedChar.character_groups?.name || "—"),
+    "",
+    "PHYSICAL",
+    selectedChar.physical_appearance || "",
+    selectedChar.build || "",
+    "",
+    "PERSONALITY",
+    selectedChar.personality || "",
+    "",
+    "VOICE & BEHAVIOR",
+    selectedChar.voice_notes || "",
+    "",
+    "BACKSTORY",
+    selectedChar.backstory_summary || "",
+    "",
+    "EROTIC",
+    "Appearance: " + (e.appearance_detail || "—"),
+    "Body: " + (e.body_attributes || "—"),
+    "Intimacy: " + (e.intimacy_behavior || "—"),
+    "Heat: " + (e.heat_notes || "—"),
+    "Sensory: " + (e.sensory_cues || "—"),
+    "",
+    "COMBAT",
+    "Archetype: " + (combat.archetype || "—"),
+    "Fighting Style: " + (combat.fighting_style || "—"),
+    "Equipment: " + (combat.equipment_notes || "—"),
+    "Abilities: " + (combat.abilities || "—"),
+    "Spells: " + (combat.spells || "—"),
+  ].join("\n")
+  navigator.clipboard.writeText(text)
+}} style={{ marginTop: 10, padding: "5px 14px", fontSize: 11, background: "transparent", border: "1px solid #2a1f12", borderRadius: 4, cursor: "pointer", color: "#3a2f1e", fontFamily: "Georgia, serif", letterSpacing: "0.08em" }}
+  onMouseEnter={e => { e.currentTarget.style.borderColor = "#6b5a3e"; e.currentTarget.style.color = "#6b5a3e" }}
+  onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a1f12"; e.currentTarget.style.color = "#3a2f1e" }}
+>copy to novelcrafter</button>
                     {selectedChar.species && <div style={{ fontSize: 13, color: "#3a2f1e", marginTop: 4, fontStyle: "italic" }}>{selectedChar.species.split("(")[0].trim()}</div>}
                   </div>
 
