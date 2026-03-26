@@ -123,11 +123,15 @@ export default function App() {
       onClick={() => { setShowPicker(false); setShowLocPicker(false) }}
     >
 
-      {/* BANNER */}
-      <div style={{ width: "100%", maxHeight: 200, overflow: "hidden", background: "#0a0806", position: "relative" }}>
-        <img src={BANNER_URL} alt="Safe Harbor" style={{ width: "100%", objectFit: "cover", objectPosition: "center top", display: "block", maxHeight: 200 }} />
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 60, background: "linear-gradient(transparent, #0e0c0a)" }} />
-      </div>
+     {/* HEADER */}
+<div style={{ width: "100%", background: "linear-gradient(135deg, #0a0806 0%, #1a0f08 40%, #0e0a06 100%)", borderBottom: "1px solid #2a1f12", padding: "18px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+  <div>
+    <div style={{ fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase", color: "#4a3520", marginBottom: 4 }}>The World of Eld · Valdris</div>
+    <div style={{ fontSize: 28, color: "#c4a87a", letterSpacing: "0.06em", fontWeight: "normal" }}>Safe Harbor</div>
+  </div>
+  <div style={{ fontSize: 13, color: "#3a2f1e", fontStyle: "italic", letterSpacing: "0.08em" }}>The Arousing Misfiring Mage</div>
+  <div style={{ fontSize: 24, color: "#2a1f12" }}>〜❧〜</div>
+</div>
 
       {/* SCENE STATE BAR */}
       <div style={{ borderBottom: "1px solid #1a1410", background: "#0a0908", padding: "0 24px", display: "flex", alignItems: "center", gap: 16, minHeight: 64, position: "relative" }}
@@ -270,12 +274,7 @@ export default function App() {
                     ? <img src={selectedChar.portrait_url} alt={selectedChar.name} style={{ width: 200, borderRadius: 10, border: "1px solid " + color + "33", display: "block" }} />
                     : <PortraitPlaceholder name={selectedChar.name} color={color} width={200} height={280} />
                   }
-                  <div style={{ marginTop: 16, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                    {selectedChar.height && <Badge style={{ background: color + "22", color, border: "0.5px solid " + color + "44" }}>{selectedChar.height}</Badge>}
-                    {selectedChar.age && <Badge style={{ background: color + "22", color, border: "0.5px solid " + color + "44" }}>{selectedChar.age}</Badge>}
-                    {selectedChar.pronouns && <Badge style={{ background: color + "22", color, border: "0.5px solid " + color + "44" }}>{selectedChar.pronouns}</Badge>}
-                    <Badge style={{ background: "#1a4a2a", color: "#4ade80", border: "0.5px solid #2d6a3a" }}>● {selectedChar.current_status}</Badge>
-                  </div>
+                  
                 </div>
 
                 <div style={{ flex: 1 }}>
