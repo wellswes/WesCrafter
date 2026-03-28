@@ -1,365 +1,344 @@
-import { useState, useEffect } from "react"
-import { supabase } from "./supabase"
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createClient } from "@supabase/supabase-js";
 
-const BANNER_URL = "https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/SafeHarborLogo.png"
-const TIMES = ["Dawn", "Morning", "Midday", "Afternoon", "Evening", "Late Evening", "Midnight", "Deep Night"]
-const CHAR_TABS = ["Core", "Erotic", "Combat"]
-const TOP_SECTIONS = ["Characters", "Places", "Lore", "Factions", "Creatures"]
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
-const Field = ({ label, value }) => {
-  if (!value) return null
+const STORY_ID = "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3";
+const CODEX_URL = "/codex"; // update once codex is deployed
+const TIMES = ["Dawn","Morning","Noon","Afternoon","Evening","Night","Midnight"];
+
+// ── CSS ───────────────────────────────────────────────────────────────────────
+const CSS = `
+  :root {
+    --bg:#0f0d0b; --bg2:#1a1612; --bg3:#16130f; --bg4:#25201a;
+    --border:#2e2820; --border2:#3a3028;
+    --gold:#c9a86c; --gold2:#a8884c;
+    --text:#ffffff; --text2:#ffffff; --text3:#cccccc; --text4:#aaaaaa;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body { background: var(--bg); font-family: Georgia, serif; color: var(--text); text-align: left; }
+  select { appearance: none; }
+  select:focus, button:focus { outline: 2px solid var(--gold2); outline-offset: 1px; }
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  .chip:hover .chip-x { opacity: 1 !important; }
+`;
+
+// ── Supabase queries ──────────────────────────────────────────────────────────
+const fetchChapters = async () => {
+  const { data } = await supabase
+    .from("chapters")
+    .select("id, sequence_number, title")
+    .eq("story_id", STORY_ID)
+    .order("sequence_number", { ascending: true });
+  return data || [];
+};
+
+const fetchScenes = async (chapterId) => {
+  const { data } = await supabase
+    .from("scenes")
+    .select("id, sequence_number, title, mood")
+    .eq("chapter_id", chapterId)
+    .order("sequence_number", { ascending: true });
+  return data || [];
+};
+
+const fetchBeats = async (sceneId) => {
+  const { data } = await supabase
+    .from("beats")
+    .select("id, sequence_number, type, directive, emotional_register, tags, prose_text")
+    .eq("scene_id", sceneId)
+    .order("sequence_number", { ascending: true });
+  return data || [];
+};
+
+const fetchCharacters = async () => {
+  const { data } = await supabase
+    .from("characters")
+    .select("id, name, portrait_url, character_groups(link_color)")
+    .order("name");
+  return (data || []).map(c => ({
+    ...c,
+    link_color: c.character_groups?.link_color || "#7a6e62"
+  }));
+};
+
+const fetchLocations = async () => {
+  const { data } = await supabase
+    .from("settlements")
+    .select("id, name")
+    .order("name");
+  return data || [];
+};
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const S = {
+  app:    { minHeight:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column" },
+  nav:    { background:"var(--bg2)", borderBottom:"1px solid var(--border)", padding:"0 16px", height:48, display:"flex", alignItems:"center", gap:10, flexShrink:0 },
+  logo:   { fontSize:13, fontWeight:"bold", color:"var(--gold)", letterSpacing:"0.07em", fontFamily:"sans-serif", flexShrink:0, whiteSpace:"nowrap" },
+  vdiv:   { width:1, height:22, background:"var(--border)", flexShrink:0 },
+  dWrap:  { display:"flex", alignItems:"center", gap:6, minWidth:0, flex:1 },
+  lbl:    { fontSize:10, color:"var(--text3)", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", flexShrink:0 },
+  sel:    { background:"var(--bg4)", color:"var(--text)", border:"1px solid var(--border2)", borderRadius:4, padding:"4px 24px 4px 8px", fontSize:12, fontFamily:"sans-serif", cursor:"pointer", minWidth:0, flex:1, backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%237a6e62'/%3E%3C/svg%3E")`, backgroundRepeat:"no-repeat", backgroundPosition:"right 7px center" },
+  codexBtn:{ marginLeft:"auto", flexShrink:0, fontSize:11, fontFamily:"sans-serif", color:"var(--text3)", background:"none", border:"1px solid var(--border)", borderRadius:4, padding:"3px 9px", cursor:"pointer", letterSpacing:"0.05em", textDecoration:"none", display:"flex", alignItems:"center", gap:4, whiteSpace:"nowrap" },
+  stateBar:{ background:"var(--bg3)", borderBottom:"1px solid var(--border)", padding:"0 16px", minHeight:48, display:"flex", alignItems:"center", gap:0, flexShrink:0, flexWrap:"wrap" },
+  locBtn: { background:"none", border:"none", cursor:"pointer", padding:"4px 10px", color:"var(--gold)", fontSize:13, fontFamily:"sans-serif", display:"flex", alignItems:"center", gap:5, flexShrink:0, borderRight:"1px solid var(--border)", height:48 },
+  locDropWrap:{ position:"relative", flexShrink:0 },
+  locDrop:{ position:"absolute", top:"calc(100% + 2px)", left:0, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, zIndex:50, minWidth:200, boxShadow:"0 4px 20px #00000070", overflow:"hidden" },
+  locSec: { fontSize:10, color:"var(--text4)", letterSpacing:"0.1em", textTransform:"uppercase", padding:"8px 12px 4px", fontFamily:"sans-serif" },
+  locItem:{ padding:"7px 12px", fontSize:13, cursor:"pointer", color:"var(--text)", fontFamily:"sans-serif" },
+  timeItem:{ padding:"6px 12px", fontSize:12, cursor:"pointer", color:"var(--text3)", fontFamily:"sans-serif", fontStyle:"italic" },
+  charZone:{ display:"flex", alignItems:"center", gap:7, flex:1, padding:"6px 10px", flexWrap:"wrap", minHeight:48 },
+  addBtn: { background:"none", border:"1px dashed var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"3px 8px", flexShrink:0 },
+  charDrop:{ position:"absolute", top:"calc(100% + 4px)", left:0, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, zIndex:50, minWidth:180, maxHeight:260, overflowY:"auto", boxShadow:"0 4px 20px #00000070" },
+  charItem:{ padding:"6px 10px", fontSize:12, cursor:"pointer", color:"var(--text)", fontFamily:"sans-serif", display:"flex", alignItems:"center", gap:7 },
+  body:   { flex:1, padding:"24px 20px 60px", maxWidth:840, width:"100%", margin:"0 auto" },
+  scHdr:  { marginBottom:22, paddingBottom:12, borderBottom:"1px solid var(--border)" },
+  chLbl:  { fontSize:10, color:"var(--text3)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:4 },
+  scTtl:  { fontSize:21, color:"var(--gold)", fontWeight:"normal", marginBottom:4 },
+  scMeta: { fontSize:12, color:"var(--text4)", fontFamily:"sans-serif" },
+  card:   { background:"var(--bg3)", border:"1px solid var(--border)", borderRadius:6, padding:"15px 17px", marginBottom:11 },
+  bNum:   { fontSize:10, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:7 },
+  bDir:   { fontSize:15, lineHeight:1.7, color:"#d8cec4", marginBottom:9 },
+  bReg:   { fontSize:12, color:"var(--text3)", fontStyle:"italic", marginBottom:7, fontFamily:"sans-serif" },
+  tags:   { display:"flex", flexWrap:"wrap", gap:4 },
+  tag:    { fontSize:10, background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:3, padding:"2px 6px", color:"var(--text3)", fontFamily:"sans-serif" },
+  msg:    { color:"var(--text4)", fontStyle:"italic", fontSize:13, padding:"48px 0", textAlign:"center", fontFamily:"sans-serif" },
+  err:    { background:"#1a1210", border:"1px solid #3a2020", borderRadius:5, padding:"14px 18px", color:"#c07060", fontSize:13, fontFamily:"sans-serif", marginTop:24, lineHeight:1.6 },
+};
+
+// ── Character chip ────────────────────────────────────────────────────────────
+function CharChip({ char, onRemove }) {
+  const color = char.link_color || "#7a6e62";
   return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6b5a3e", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 15, lineHeight: 1.8, color: "#c4a87a" }}>{value}</div>
+    <div className="chip"
+      title={`${char.name} · double-click to remove`}
+      onDoubleClick={() => onRemove(char.id)}
+      style={{ position:"relative", cursor:"pointer", flexShrink:0 }}>
+      {char.portrait_url
+        ? <img src={char.portrait_url} alt={char.name}
+            style={{ width:32, height:32, borderRadius:"50%", objectFit:"cover", border:`2px solid ${color}`, display:"block" }} />
+        : <div style={{ width:32, height:32, borderRadius:"50%", background:color+"22", border:`2px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, color, fontFamily:"sans-serif", fontWeight:"bold" }}>
+            {char.name[0]}
+          </div>
+      }
+      <span className="chip-x" style={{ position:"absolute", top:-3, right:-3, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:"50%", width:14, height:14, display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, color:"var(--text3)", opacity:0, transition:"opacity 0.15s", pointerEvents:"none" }}>✕</span>
     </div>
-  )
+  );
 }
 
-const Badge = ({ children, style }) => (
-  <span style={{ display: "inline-block", fontSize: 11, fontWeight: 500, padding: "3px 10px", borderRadius: 6, marginRight: 6, marginBottom: 4, ...style }}>{children}</span>
-)
-
-const PortraitPlaceholder = ({ name, color, width, height }) => (
-  <div style={{ width, height, borderRadius: 8, background: color + "15", border: "1px solid " + color + "33", display: "flex", alignItems: "center", justifyContent: "center", fontSize: width / 3, color }}>
-    {name[0]}
-  </div>
-)
-
+// ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [characters, setCharacters] = useState([])
-  const [groups, setGroups] = useState([])
-  const [locations, setLocations] = useState([])
-  const [sceneChars, setSceneChars] = useState([])
-  const [sceneLocation, setSceneLocation] = useState("The Manor")
-  const [sceneTime, setSceneTime] = useState("Late Evening")
-  const [showPicker, setShowPicker] = useState(false)
-  const [showLocPicker, setShowLocPicker] = useState(false)
-  const [expanded, setExpanded] = useState({ Characters: true })
-  const [selectedCharId, setSelectedCharId] = useState(null)
-  const [selectedSection, setSelectedSection] = useState(null)
-  const [charTab, setCharTab] = useState("Core")
-  const [loading, setLoading] = useState(true)
+  const [chapters,      setChapters]      = useState([]);
+  const [scenes,        setScenes]        = useState([]);
+  const [scenesWithBeats, setScenesWithBeats] = useState([]);
+  const [selCh,         setSelCh]         = useState(null);
+  const [selSc,         setSelSc]         = useState(null);
+  const [chMeta,        setChMeta]        = useState(null);
+  const [phase,         setPhase]         = useState("loading");
+  const [err,       setErr]       = useState("");
+  const [allChars,  setAllChars]  = useState([]);
+  const [allLocs,   setAllLocs]   = useState([]);
+  const [sceneChars,setSceneChars]= useState([]);
+  const [location,  setLocation]  = useState("Thorncliff Manor");
+  const [timeOfDay, setTimeOfDay] = useState("Evening");
+  const [showLoc,   setShowLoc]   = useState(false);
+  const [showChar,  setShowChar]  = useState(false);
+  const locRef  = useRef(null);
+  const charRef = useRef(null);
 
+  // close dropdowns on outside click
   useEffect(() => {
-    async function load() {
-      const [{ data: chars }, { data: grps }, { data: locs }] = await Promise.all([
-        supabase.from("characters").select("*, character_erotic(*), character_combat(*), character_groups(name, link_color, parent_group_id)"),
-        supabase.from("character_groups").select("*").order("sort_order"),
-        supabase.from("settlements").select("id, name"),
-      ])
-      if (chars) setCharacters(chars)
-      if (grps) setGroups(grps)
-      if (locs) setLocations(locs)
-      setLoading(false)
-    }
-    load()
-  }, [])
+    const h = e => {
+      if (locRef.current  && !locRef.current.contains(e.target))  setShowLoc(false);
+      if (charRef.current && !charRef.current.contains(e.target)) setShowChar(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
 
-  const topGroups = groups.filter(g => !g.parent_group_id)
-  const childGroups = id => groups.filter(g => g.parent_group_id === id)
-  const charsInGroup = id => characters.filter(c => c.group_id === id)
-  const selectedChar = characters.find(c => c.id === selectedCharId)
-  const available = characters.filter(c => !sceneChars.find(s => s.id === c.id))
+  const loadChapter = useCallback(async (ch) => {
+    setSelCh(ch.id); setChMeta(ch); setSelSc(null);
+    setScenes([]); setScenesWithBeats([]); setPhase("loading");
+    try {
+      const scs = await fetchScenes(ch.id);
+      setScenes(scs);
+      if (scs.length) {
+        setSelSc(scs[0].id);
+        const swb = await Promise.all(scs.map(async sc => ({ scene: sc, beats: await fetchBeats(sc.id) })));
+        setScenesWithBeats(swb);
+      }
+      setPhase("ready");
+    } catch(e) { setErr(e.message); setPhase("error"); }
+  }, []);
 
-  const toggle = key => setExpanded(p => ({ ...p, [key]: !p[key] }))
-  const selectChar = id => { setSelectedCharId(id); setSelectedSection(null); setCharTab("Core") }
-  const selectSection = s => { setSelectedSection(s); setSelectedCharId(null) }
+  // initial load
+  useEffect(() => {
+    (async () => {
+      try {
+        const [chs, chars, locs] = await Promise.all([
+          fetchChapters(), fetchCharacters(), fetchLocations()
+        ]);
+        setAllChars(chars);
+        setAllLocs(locs);
+        if (!chs.length) { setPhase("ready"); return; }
+        setChapters(chs);
+        await loadChapter(chs[0]);
+      } catch(e) { setErr(e.message); setPhase("error"); }
+    })();
+  }, [loadChapter]);
 
-  const addToScene = c => { setSceneChars(p => [...p, c]); setShowPicker(false) }
-  const removeFromScene = id => setSceneChars(p => p.filter(c => c.id !== id))
+  const onChapter = useCallback(async e => {
+    const ch = chapters.find(c => c.id === e.target.value);
+    if (ch) await loadChapter(ch);
+  }, [chapters, loadChapter]);
 
-  // Recursive tree node for groups
-  const GroupNode = ({ group, depth = 0 }) => {
-    const children = childGroups(group.id)
-    const chars = charsInGroup(group.id)
-    const hasChildren = children.length > 0 || chars.length > 0
-    const isOpen = expanded[group.id]
-    const color = group.link_color || "#c4a87a"
+  const onScene = useCallback(e => {
+    const id = e.target.value;
+    setSelSc(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
-    return (
-      <div>
-        <div onClick={() => toggle(group.id)}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px 6px " + (16 + depth * 16) + "px", cursor: "pointer", borderRadius: 4, userSelect: "none" }}
-          onMouseEnter={e => e.currentTarget.style.background = "#1a1410"}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-        >
-          <span style={{ fontSize: 9, color: "#3a2f1e", width: 10 }}>{hasChildren ? (isOpen ? "▼" : "►") : ""}</span>
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#a89070", letterSpacing: "0.03em" }}>{group.name}</span>
-          {chars.length > 0 && <span style={{ fontSize: 10, color: "#3a2f1e", marginLeft: "auto" }}>{chars.length}</span>}
-        </div>
-
-        {isOpen && (
-          <div>
-            {children.map(child => <GroupNode key={child.id} group={child} depth={depth + 1} />)}
-            {chars.map(c => (
-              <div key={c.id} onClick={() => selectChar(c.id)}
-                style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px 5px " + (32 + depth * 16) + "px", cursor: "pointer", borderRadius: 4, background: selectedCharId === c.id ? "#1a1410" : "transparent" }}
-                onMouseEnter={e => e.currentTarget.style.background = "#1a1410"}
-                onMouseLeave={e => e.currentTarget.style.background = selectedCharId === c.id ? "#1a1410" : "transparent"}
-              >
-                {c.portrait_url
-                  ? <img src={c.portrait_url} alt={c.name} style={{ width: 22, height: 22, borderRadius: "50%", objectFit: "cover", border: "1px solid " + color + "44", flexShrink: 0 }} />
-                  : <div style={{ width: 22, height: 22, borderRadius: "50%", background: color + "22", border: "1px solid " + color + "44", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color, flexShrink: 0 }}>{c.name[0]}</div>
-                }
-                <span style={{ fontSize: 13, color: selectedCharId === c.id ? color : "#8b7355" }}>{c.name}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  if (loading) return (
-    <div style={{ background: "#0e0c0a", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Georgia, serif", color: "#6b5a3e", fontSize: 16 }}>
-      Opening the Codex...
-    </div>
-  )
+  const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) setSceneChars(p => [...p, c]); setShowChar(false); };
+  const removeChar = id => setSceneChars(p => p.filter(c => c.id !== id));
+  const available  = allChars.filter(c => !sceneChars.find(x => x.id === c.id));
 
   return (
-    <div style={{ background: "#0e0c0a", minHeight: "100vh", fontFamily: "Georgia, serif", color: "#c4a87a" }}
-      onClick={() => { setShowPicker(false); setShowLocPicker(false) }}
-    >
+    <>
+      <style>{CSS}</style>
+      <div style={S.app}>
 
-     {/* HEADER */}
-<div style={{ width: "100%", background: "linear-gradient(135deg, #0a0806 0%, #1a0f08 40%, #0e0a06 100%)", borderBottom: "1px solid #2a1f12", padding: "18px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-  <div>
-    <div style={{ fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase", color: "#4a3520", marginBottom: 4 }}>The World of Eld · Valdris</div>
-    <div style={{ fontSize: 28, color: "#c4a87a", letterSpacing: "0.06em", fontWeight: "normal" }}>Safe Harbor</div>
-  </div>
-  <div style={{ fontSize: 13, color: "#3a2f1e", fontStyle: "italic", letterSpacing: "0.08em" }}>The Arousing Misfiring Mage</div>
-  <div style={{ fontSize: 24, color: "#2a1f12" }}>〜❧〜</div>
-</div>
-
-      {/* SCENE STATE BAR */}
-      <div style={{ borderBottom: "1px solid #1a1410", background: "#0a0908", padding: "0 24px", display: "flex", alignItems: "center", gap: 16, minHeight: 64, position: "relative" }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div onClick={() => { setShowLocPicker(!showLocPicker); setShowPicker(false) }}
-          style={{ fontSize: 11, color: "#3a2f1e", cursor: "pointer", whiteSpace: "nowrap", letterSpacing: "0.06em", minWidth: 200 }}
-          onMouseEnter={e => e.currentTarget.style.color = "#6b5a3e"}
-          onMouseLeave={e => e.currentTarget.style.color = "#3a2f1e"}
-        >
-          {sceneLocation} · {sceneTime}
-        </div>
-
-        {showLocPicker && (
-          <div style={{ position: "absolute", top: "100%", left: 24, zIndex: 200, background: "#150f08", border: "1px solid #2a1f12", borderRadius: 8, padding: 8, minWidth: 220, boxShadow: "0 8px 32px rgba(0,0,0,0.8)" }}>
-            <div style={{ fontSize: 10, color: "#3a2f1e", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 12px 8px" }}>Location</div>
-            {locations.length === 0
-              ? <div style={{ padding: "8px 12px", fontSize: 12, color: "#3a2f1e", fontStyle: "italic" }}>No settlements yet</div>
-              : locations.map(l => (
-                <div key={l.id} onClick={() => { setSceneLocation(l.name); setShowLocPicker(false) }}
-                  style={{ padding: "7px 12px", fontSize: 13, cursor: "pointer", color: "#c4a87a", borderRadius: 4 }}
-                  onMouseEnter={e => e.currentTarget.style.background = "#2a1f12"}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                >{l.name}</div>
-              ))
-            }
-            <div style={{ borderTop: "1px solid #2a1f12", margin: "8px 0 4px" }} />
-            <div style={{ fontSize: 10, color: "#3a2f1e", letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 12px 8px" }}>Time of Day</div>
-            {TIMES.map(t => (
-              <div key={t} onClick={() => { setSceneTime(t); setShowLocPicker(false) }}
-                style={{ padding: "7px 12px", fontSize: 12, cursor: "pointer", color: "#8b7355", borderRadius: 4, fontStyle: "italic" }}
-                onMouseEnter={e => e.currentTarget.style.background = "#2a1f12"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-              >{t}</div>
-            ))}
+        {/* nav */}
+        <div style={S.nav}>
+          <div style={S.logo}>Safe Harbor</div>
+          <div style={S.vdiv} />
+          <div style={S.dWrap}>
+            <span style={S.lbl}>Ch.</span>
+            <select style={S.sel} value={selCh||""} onChange={onChapter} disabled={phase==="loading"}>
+              {chapters.map(c => <option key={c.id} value={c.id}>{c.sequence_number}. {c.title}</option>)}
+            </select>
           </div>
-        )}
-
-        <div style={{ width: 1, height: 36, background: "#1a1410", flexShrink: 0 }} />
-
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1 }}>
-          {sceneChars.map(c => {
-            const color = c.character_groups?.link_color || "#6b4c10"
-            return (
-              <div key={c.id} onDoubleClick={() => removeFromScene(c.id)} title={c.name + " · double click to remove"} style={{ cursor: "pointer", position: "relative" }}>
-                {c.portrait_url
-                  ? <img src={c.portrait_url} alt={c.name} style={{ width: 40, height: 40, borderRadius: "50%", objectFit: "cover", border: "2px solid " + color + "66" }} />
-                  : <div style={{ width: 40, height: 40, borderRadius: "50%", background: color + "22", border: "1.5px solid " + color + "55", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color }}>{c.name[0]}</div>
-                }
-                <div style={{ position: "absolute", bottom: -14, left: "50%", transform: "translateX(-50%)", fontSize: 8, color: "#3a2f1e", whiteSpace: "nowrap" }}>{c.name}</div>
-              </div>
-            )
-          })}
-
-          <div onClick={e => { e.stopPropagation(); setShowPicker(!showPicker); setShowLocPicker(false) }}
-            style={{ width: 40, height: 40, borderRadius: "50%", border: "1px dashed #2a1f12", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#2a1f12", fontSize: 20 }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = "#5a4a35"; e.currentTarget.style.color = "#5a4a35" }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a1f12"; e.currentTarget.style.color = "#2a1f12" }}
-          >+</div>
-
-          {showPicker && (
-            <div style={{ position: "absolute", top: "100%", left: 260, zIndex: 200, background: "#150f08", border: "1px solid #2a1f12", borderRadius: 8, padding: 8, minWidth: 200, boxShadow: "0 8px 32px rgba(0,0,0,0.8)" }}>
-              {available.length === 0
-                ? <div style={{ padding: "12px 16px", fontSize: 12, color: "#3a2f1e" }}>All characters in scene</div>
-                : available.map(c => (
-                  <div key={c.id} onClick={() => addToScene(c)}
-                    style={{ padding: "8px 12px", fontSize: 14, cursor: "pointer", color: c.character_groups?.link_color || "#c4a87a", borderRadius: 4, display: "flex", alignItems: "center", gap: 8 }}
-                    onMouseEnter={e => e.currentTarget.style.background = "#2a1f12"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: c.character_groups?.link_color || "#6b4c10", flexShrink: 0 }} />
-                    {c.name}
-                    <span style={{ fontSize: 10, color: "#3a2f1e", marginLeft: "auto" }}>{c.character_groups?.name}</span>
-                  </div>
-                ))
-              }
-            </div>
-          )}
+          <div style={S.vdiv} />
+          <div style={S.dWrap}>
+            <span style={S.lbl}>Scene</span>
+            <select style={S.sel} value={selSc||""} onChange={onScene} disabled={phase==="loading"||!scenes.length}>
+              {scenes.map(s => <option key={s.id} value={s.id}>{s.sequence_number}. {s.title}</option>)}
+            </select>
+          </div>
+          <a href={CODEX_URL} style={S.codexBtn}>Codex ↗</a>
         </div>
-      </div>
 
-      {/* BODY — tree + content */}
-      <div style={{ display: "flex", height: "calc(100vh - 264px)", overflow: "hidden" }}>
-
-        {/* TREE NAV */}
-        <div style={{ width: 260, flexShrink: 0, borderRight: "1px solid #1a1410", overflowY: "auto", padding: "16px 8px" }}>
-          {TOP_SECTIONS.map(s => (
-            <div key={s}>
-              <div onClick={() => { toggle(s); selectSection(s) }}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 8px", cursor: "pointer", borderRadius: 4, background: selectedSection === s && !selectedCharId ? "#1a1410" : "transparent" }}
-                onMouseEnter={e => e.currentTarget.style.background = "#1a1410"}
-                onMouseLeave={e => e.currentTarget.style.background = selectedSection === s && !selectedCharId ? "#1a1410" : "transparent"}
-              >
-                <span style={{ fontSize: 9, color: "#3a2f1e", width: 10 }}>{s === "Characters" ? (expanded[s] ? "▼" : "►") : "►"}</span>
-                <span style={{ fontSize: 14, color: "#c4a87a", fontWeight: 500, letterSpacing: "0.04em" }}>{s}</span>
+        {/* scene state bar */}
+        <div style={S.stateBar}>
+          <div ref={locRef} style={S.locDropWrap}>
+            <button style={S.locBtn} onClick={() => setShowLoc(p => !p)}>
+              <span>📍</span>
+              <span>{location}</span>
+              <span style={{fontSize:11, color:"var(--text3)"}}>· {timeOfDay}</span>
+              <span style={{fontSize:10, color:"var(--text4)"}}>▾</span>
+            </button>
+            {showLoc && (
+              <div style={S.locDrop}>
+                <div style={S.locSec}>Location</div>
+                {allLocs.length === 0
+                  ? <div style={{padding:"8px 12px", fontSize:12, color:"var(--text4)", fontStyle:"italic", fontFamily:"sans-serif"}}>No locations yet</div>
+                  : allLocs.map(l => (
+                    <div key={l.id} style={S.locItem}
+                      onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+                      onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                      onClick={() => { setLocation(l.name); setShowLoc(false); }}>
+                      {l.name}
+                    </div>
+                  ))
+                }
+                <div style={{borderTop:"1px solid var(--border)", padding:"6px 10px"}}>
+                  <input placeholder="Type location…"
+                    style={{background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, padding:"4px 8px", width:"100%", fontFamily:"sans-serif", outline:"none"}}
+                    onKeyDown={e => { if (e.key==="Enter" && e.target.value.trim()) { setLocation(e.target.value.trim()); setShowLoc(false); }}} />
+                </div>
+                <div style={{borderTop:"1px solid var(--border)"}} />
+                <div style={S.locSec}>Time of Day</div>
+                {TIMES.map(t => (
+                  <div key={t} style={{...S.timeItem, color:t===timeOfDay?"var(--gold)":"var(--text3)", fontWeight:t===timeOfDay?"bold":"normal"}}
+                    onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+                    onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                    onClick={() => { setTimeOfDay(t); setShowLoc(false); }}>
+                    {t}
+                  </div>
+                ))}
               </div>
+            )}
+          </div>
 
-              {s === "Characters" && expanded["Characters"] && (
-                <div>
-                  {topGroups.map(g => <GroupNode key={g.id} group={g} depth={0} />)}
+          <div style={{width:1, height:36, background:"var(--border)", flexShrink:0}} />
+
+          <div style={S.charZone}>
+            {sceneChars.map(c => <CharChip key={c.id} char={c} onRemove={removeChar} />)}
+            <div ref={charRef} style={{position:"relative", flexShrink:0}}>
+              <button style={S.addBtn} onClick={() => setShowChar(p => !p)}>+ character</button>
+              {showChar && (
+                <div style={S.charDrop}>
+                  {available.length === 0
+                    ? <div style={{padding:"8px 12px", fontSize:12, color:"var(--text4)", fontStyle:"italic", fontFamily:"sans-serif"}}>All characters added</div>
+                    : available.map(c => {
+                      const color = c.link_color || "#7a6e62";
+                      return (
+                        <div key={c.id} style={S.charItem}
+                          onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+                          onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                          onClick={() => addChar(c)}>
+                          {c.portrait_url
+                            ? <img src={c.portrait_url} style={{width:22, height:22, borderRadius:"50%", objectFit:"cover", border:`1px solid ${color}`}} />
+                            : <div style={{width:22, height:22, borderRadius:"50%", background:color+"22", border:`1px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color, fontFamily:"sans-serif"}}>{c.name[0]}</div>
+                          }
+                          <span style={{color, fontFamily:"sans-serif", fontSize:13}}>{c.name}</span>
+                        </div>
+                      );
+                    })
+                  }
                 </div>
               )}
             </div>
-          ))}
+          </div>
         </div>
 
-        {/* CONTENT PANEL */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "32px 48px" }}>
-
-          {/* Welcome */}
-          {!selectedCharId && !selectedSection && (
-            <div style={{ color: "#3a2f1e", fontSize: 14, fontStyle: "italic", marginTop: 40, textAlign: "center" }}>
-              Select a section from the codex.
+        {/* body */}
+        <div style={S.body}>
+          {phase==="loading" && <div style={S.msg}>Loading…</div>}
+          {phase==="error" && (
+            <div style={S.err}>
+              <strong>Could not connect to database.</strong><br />{err}<br />
+              <span style={{opacity:.7, fontSize:12}}>Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in your .env file.</span>
             </div>
           )}
-
-          {/* Section placeholder */}
-          {selectedSection && selectedSection !== "Characters" && !selectedCharId && (
-            <div style={{ color: "#3a2f1e", fontSize: 14, fontStyle: "italic", marginTop: 40, textAlign: "center" }}>
-              {selectedSection} — coming soon
-            </div>
-          )}
-
-          {/* Characters welcome */}
-          {selectedSection === "Characters" && !selectedCharId && (
-            <div style={{ color: "#3a2f1e", fontSize: 14, fontStyle: "italic", marginTop: 40, textAlign: "center" }}>
-              Select a character from the tree.
-            </div>
-          )}
-
-          {/* CHARACTER CODEX */}
-          {selectedCharId && selectedChar && (() => {
-            const e = selectedChar.character_erotic?.[0] || {}
-            const combat = selectedChar.character_combat?.[0] || {}
-            const color = selectedChar.character_groups?.link_color || "#c4a87a"
-            return (
-              <div style={{ display: "flex", gap: 48 }}>
-                <div style={{ flexShrink: 0, width: 200, position: "sticky", top: 0, alignSelf: "flex-start" }}>
-                  {selectedChar.portrait_url
-                    ? <img src={selectedChar.portrait_url} alt={selectedChar.name} style={{ width: 200, borderRadius: 10, border: "1px solid " + color + "33", display: "block" }} />
-                    : <PortraitPlaceholder name={selectedChar.name} color={color} width={200} height={280} />
-                  }
-                  
-                </div>
-
-                <div style={{ flex: 1 }}>
-                  <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid #1a1410" }}>
-                    <div style={{ fontSize: 32, color, fontWeight: "normal" }}>{selectedChar.name}</div>
-                    <div style={{ fontSize: 14, color: "#6b5a3e", marginTop: 4 }}>{selectedChar.occupation} · {selectedChar.character_groups?.name}</div>
-<button onClick={() => {
-  const e = selectedChar.character_erotic?.[0] || {}
-  const combat = selectedChar.character_combat?.[0] || {}
-  const text = [
-    "NAME: " + selectedChar.name,
-    "AGE: " + (selectedChar.age || "—") + " | PRONOUNS: " + (selectedChar.pronouns || "—") + " | SPECIES: " + (selectedChar.species || "—"),
-    "OCCUPATION: " + (selectedChar.occupation || "—") + " | GROUP: " + (selectedChar.character_groups?.name || "—"),
-    "",
-    "PHYSICAL",
-    selectedChar.physical_appearance || "",
-    selectedChar.build || "",
-    "",
-    "PERSONALITY",
-    selectedChar.personality || "",
-    "",
-    "VOICE & BEHAVIOR",
-    selectedChar.voice_notes || "",
-    "",
-    "BACKSTORY",
-    selectedChar.backstory_summary || "",
-    "",
-    "EROTIC",
-    "Appearance: " + (e.appearance_detail || "—"),
-    "Body: " + (e.body_attributes || "—"),
-    "Intimacy: " + (e.intimacy_behavior || "—"),
-    "Heat: " + (e.heat_notes || "—"),
-    "Sensory: " + (e.sensory_cues || "—"),
-    "",
-    "COMBAT",
-    "Archetype: " + (combat.archetype || "—"),
-    "Fighting Style: " + (combat.fighting_style || "—"),
-    "Equipment: " + (combat.equipment_notes || "—"),
-    "Abilities: " + (combat.abilities || "—"),
-    "Spells: " + (combat.spells || "—"),
-  ].join("\n")
-  navigator.clipboard.writeText(text)
-}} style={{ marginTop: 10, padding: "5px 14px", fontSize: 11, background: "transparent", border: "1px solid #2a1f12", borderRadius: 4, cursor: "pointer", color: "#3a2f1e", fontFamily: "Georgia, serif", letterSpacing: "0.08em" }}
-  onMouseEnter={e => { e.currentTarget.style.borderColor = "#6b5a3e"; e.currentTarget.style.color = "#6b5a3e" }}
-  onMouseLeave={e => { e.currentTarget.style.borderColor = "#2a1f12"; e.currentTarget.style.color = "#3a2f1e" }}
->copy to novelcrafter</button>
-                    {selectedChar.species && <div style={{ fontSize: 13, color: "#3a2f1e", marginTop: 4, fontStyle: "italic" }}>{selectedChar.species.split("(")[0].trim()}</div>}
-                  </div>
-
-                  <div style={{ display: "flex", marginBottom: 28, borderBottom: "1px solid #1a1410" }}>
-                    {CHAR_TABS.map(t => (
-                      <button key={t} onClick={() => setCharTab(t)} style={{ padding: "10px 24px", fontSize: 13, background: "transparent", border: "none", cursor: "pointer", color: charTab === t ? color : "#3a2f1e", borderBottom: charTab === t ? "2px solid " + color : "2px solid transparent", marginBottom: -1, fontFamily: "Georgia, serif", letterSpacing: "0.05em" }}>{t}</button>
-                    ))}
-                  </div>
-
-                  {charTab === "Core" && <div>
-                    <Field label="Species / Heritage" value={selectedChar.species} />
-                    <Field label="Physical Appearance" value={selectedChar.physical_appearance} />
-                    <Field label="Build" value={selectedChar.build} />
-                    <Field label="Personality" value={selectedChar.personality} />
-                    <Field label="Voice & Behavior" value={selectedChar.voice_notes} />
-                    <Field label="Backstory" value={selectedChar.backstory_summary} />
-                  </div>}
-
-                  {charTab === "Erotic" && <div>
-                    <Field label="Appearance Detail" value={e.appearance_detail} />
-                    <Field label="Body Attributes" value={e.body_attributes} />
-                    <Field label="Intimacy Behavior" value={e.intimacy_behavior} />
-                    <Field label="Heat Notes" value={e.heat_notes} />
-                    <Field label="Sensory Cues" value={e.sensory_cues} />
-                  </div>}
-
-                  {charTab === "Combat" && <div>
-                    <Field label="Archetype" value={combat.archetype} />
-                    <Field label="Fighting Style" value={combat.fighting_style} />
-                    <Field label="Equipment" value={combat.equipment_notes} />
-                    <Field label="Abilities" value={combat.abilities || "Not yet defined"} />
-                    <Field label="Spells" value={combat.spells || "Not yet defined"} />
-                  </div>}
-                </div>
+          {phase==="ready" && scenesWithBeats.length === 0 && <div style={S.msg}>No scenes for this chapter.</div>}
+          {phase==="ready" && scenesWithBeats.length > 0 && (
+            <>
+              <div style={S.scHdr}>
+                <div style={S.chLbl}>Ch. {chMeta?.sequence_number} — {chMeta?.title}</div>
               </div>
-            )
-          })()}
+              {scenesWithBeats.map(({ scene, beats }) => (
+                <div key={scene.id} id={scene.id}>
+                  <h2 style={{ fontSize:14, color:"var(--gold)", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:16, marginTop:32, paddingBottom:8, borderBottom:"1px solid var(--border)" }}>
+                    {scene.sequence_number}. {scene.title}
+                  </h2>
+                  {beats.length === 0
+                    ? <div style={S.msg}>No beats for this scene yet.</div>
+                    : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
+                        {beats.map(b => b.prose_text || "").filter(Boolean).join("\n\n")}
+                      </div>
+                  }
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
-    </div>
-  )
+    </>
+  );
 }
