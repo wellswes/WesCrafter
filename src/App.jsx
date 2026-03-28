@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { Routes, Route } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
+import Codex from "./Codex.jsx";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -133,7 +135,7 @@ function CharChip({ char, onRemove }) {
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
-export default function App() {
+function ProseViewer() {
   const [chapters,      setChapters]      = useState([]);
   const [scenes,        setScenes]        = useState([]);
   const [scenesWithBeats, setScenesWithBeats] = useState([]);
@@ -337,5 +339,14 @@ export default function App() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<ProseViewer />} />
+      <Route path="/codex" element={<Codex />} />
+    </Routes>
   );
 }
