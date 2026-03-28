@@ -70,32 +70,57 @@ const COMBAT_FIELDS = [
   { key:"equipment_notes",  label:"Equipment Notes" },
 ];
 
-function FieldList({ data, fields }) {
-  if (!data) return <div style={S.msg}>No data yet.</div>;
-  const entries = fields.filter(f => data[f.key] != null && data[f.key] !== "");
-  if (!entries.length) return <div style={S.msg}>No data yet.</div>;
+const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
+
+function FieldList({ data, fields, editing, draft, onDraftChange }) {
+  if (!editing) {
+    if (!data) return <div style={S.msg}>No data yet.</div>;
+    const entries = fields.filter(f => data[f.key] != null && data[f.key] !== "");
+    if (!entries.length) return <div style={S.msg}>No data yet.</div>;
+    return (
+      <>
+        {entries.map(f => (
+          <div key={f.key}>
+            <div style={S.secLbl}>{f.label}</div>
+            <div style={S.secBody}>{String(data[f.key])}</div>
+          </div>
+        ))}
+      </>
+    );
+  }
+  // edit mode — show all fields as textareas
   return (
     <>
-      {entries.map(f => (
-        <div key={f.key}>
+      {fields.map(f => (
+        <div key={f.key} style={{ marginBottom:20 }}>
           <div style={S.secLbl}>{f.label}</div>
-          <div style={S.secBody}>{String(data[f.key])}</div>
+          <textarea
+            value={draft[f.key] ?? ""}
+            onChange={e => onDraftChange(f.key, e.target.value)}
+            rows={3}
+            style={{ width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" }}
+          />
         </div>
       ))}
     </>
   );
 }
 
-function DetailPanel({ char }) {
+function DetailPanel({ char, onCharUpdate }) {
   const [tab,     setTab]     = useState("Core");
-  const [erotic,  setErotic]  = useState(undefined); // undefined = not yet loaded
+  const [erotic,  setErotic]  = useState(undefined);
   const [combat,  setCombat]  = useState(undefined);
   const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft,   setDraft]   = useState({});
+  const [saving,  setSaving]  = useState(false);
+  const [copied,  setCopied]  = useState(false);
 
   useEffect(() => {
     setTab("Core");
     setErotic(undefined);
     setCombat(undefined);
+    setEditing(false);
     setLoading(true);
     Promise.all([
       supabase.from("character_erotic").select("*").eq("character_id", char.id).single(),
@@ -106,6 +131,61 @@ function DetailPanel({ char }) {
       setLoading(false);
     });
   }, [char.id]);
+
+  const dataForTab = () => tab === "Core" ? char : tab === "Erotic" ? erotic : combat;
+  const fieldsForTab = () => tab === "Core" ? CORE_FIELDS : tab === "Erotic" ? EROTIC_FIELDS : COMBAT_FIELDS;
+
+  const startEdit = () => {
+    const src = dataForTab() || {};
+    const init = {};
+    fieldsForTab().forEach(f => { init[f.key] = src[f.key] ?? ""; });
+    setDraft(init);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => { setEditing(false); setDraft({}); };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    const payload = {};
+    fieldsForTab().forEach(f => { payload[f.key] = draft[f.key] || null; });
+    try {
+      if (tab === "Core") {
+        await supabase.from("characters").update(payload).eq("id", char.id);
+        onCharUpdate({ ...char, ...payload });
+      } else if (tab === "Erotic") {
+        await supabase.from("character_erotic").upsert({ ...payload, character_id: char.id }, { onConflict: "character_id" });
+        setErotic(prev => ({ ...(prev || {}), ...payload, character_id: char.id }));
+      } else {
+        await supabase.from("character_combat").upsert({ ...payload, character_id: char.id }, { onConflict: "character_id" });
+        setCombat(prev => ({ ...(prev || {}), ...payload, character_id: char.id }));
+      }
+    } finally {
+      setSaving(false);
+      setEditing(false);
+      setDraft({});
+    }
+  };
+
+  const copyForNovelCrafter = () => {
+    const sections = [
+      { label:"CORE",   fields:CORE_FIELDS,   data:char },
+      { label:"EROTIC", fields:EROTIC_FIELDS, data:erotic },
+      { label:"COMBAT", fields:COMBAT_FIELDS, data:combat },
+    ];
+    const lines = [`[${char.name}]`];
+    for (const { label, fields, data } of sections) {
+      if (!data) continue;
+      const entries = fields.filter(f => data[f.key] != null && data[f.key] !== "");
+      if (!entries.length) continue;
+      lines.push("", label);
+      for (const f of entries) lines.push(`${f.label}: ${data[f.key]}`);
+    }
+    navigator.clipboard.writeText(lines.join("\n")).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   const color = char.link_color || "#7a6e62";
   const meta  = [char.character_group, char.role, char.species].filter(Boolean).join(" · ");
@@ -122,19 +202,35 @@ function DetailPanel({ char }) {
 
       {/* right column */}
       <div style={{ flex:1, minWidth:0 }}>
-        <div style={S.name}>{char.name}</div>
+        {/* name row + action buttons */}
+        <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:4 }}>
+          <div style={S.name}>{char.name}</div>
+          {!loading && (
+            <div style={{ display:"flex", gap:6, flexShrink:0, paddingTop:6 }}>
+              <button onClick={copyForNovelCrafter} style={taBtn}>{copied ? "Copied!" : "Copy"}</button>
+              {editing
+                ? <>
+                    <button onClick={saveEdit}   disabled={saving} style={{ ...taBtn, color:"var(--gold)",  borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
+                    <button onClick={cancelEdit} disabled={saving} style={taBtn}>Cancel</button>
+                  </>
+                : <button onClick={startEdit} style={taBtn}>Edit</button>
+              }
+            </div>
+          )}
+        </div>
         {meta && <div style={S.meta}>{meta}</div>}
 
         {/* tab bar */}
         <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
           {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
-              background:"none", border:"none", cursor:"pointer",
+            <button key={t} onClick={() => { if (!editing) setTab(t); }} style={{
+              background:"none", border:"none", cursor: editing ? "default" : "pointer",
               padding:"8px 16px 7px",
               fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase",
               color: t === tab ? "var(--gold)" : "var(--text4)",
               borderBottom: t === tab ? "2px solid var(--gold)" : "2px solid transparent",
               marginBottom:-1,
+              opacity: editing && t !== tab ? 0.4 : 1,
             }}>{t}</button>
           ))}
         </div>
@@ -142,9 +238,13 @@ function DetailPanel({ char }) {
         {/* tab content */}
         {loading
           ? <div style={S.msg}>Loading…</div>
-          : tab === "Core"   ? <FieldList data={char}   fields={CORE_FIELDS} />
-          : tab === "Erotic" ? <FieldList data={erotic} fields={EROTIC_FIELDS} />
-          :                    <FieldList data={combat} fields={COMBAT_FIELDS} />
+          : <FieldList
+              data={dataForTab()}
+              fields={fieldsForTab()}
+              editing={editing}
+              draft={draft}
+              onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))}
+            />
         }
       </div>
     </div>
@@ -155,8 +255,12 @@ export default function Codex() {
   const [characters,  setCharacters]  = useState([]);
   const [allGroups,   setAllGroups]   = useState([]);
   const [groupOrder,  setGroupOrder]  = useState([]);
-  const [collapsed,   setCollapsed]   = useState(new Set());
+  const [collapsed,   setCollapsed]   = useState(() => {
+    const saved = localStorage.getItem("codex_collapsed_groups");
+    return saved ? new Set(JSON.parse(saved)) : null;
+  });
   const [selected,    setSelected]    = useState(null);
+  const [storyTitle,  setStoryTitle]  = useState("");
   const [phase,       setPhase]       = useState("loading");
   const [err,         setErr]         = useState("");
   const [dragOverGrp, setDragOverGrp] = useState(null);
@@ -167,7 +271,7 @@ export default function Codex() {
   useEffect(() => {
     (async () => {
       try {
-        const [{ data: chars, error: e1 }, { data: grps, error: e2 }] = await Promise.all([
+        const [{ data: chars, error: e1 }, { data: grps, error: e2 }, { data: story }] = await Promise.all([
           supabase
             .from("characters")
             .select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, group_id, character_group")
@@ -175,16 +279,27 @@ export default function Codex() {
             .order("name"),
           supabase
             .from("character_groups")
-            .select("id, name, link_color")
-            .order("name"),
+            .select("id, name, link_color, sort_order")
+            .order("sort_order"),
+          supabase
+            .from("stories")
+            .select("title")
+            .eq("id", "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3")
+            .single(),
         ]);
         if (e1) throw e1;
         if (e2) throw e2;
+        if (story?.title) setStoryTitle(story.title);
         const charList = chars || [];
+        const grpList  = grps  || [];
         setCharacters(charList);
-        setAllGroups(grps || []);
-        const namesFromChars = [...new Set(charList.map(c => c.character_group || "Ungrouped"))];
-        setGroupOrder(namesFromChars);
+        setAllGroups(grpList);
+        // order by sort_order from DB; append any group names from chars not in groups table
+        const grpNames = grpList.map(g => g.name);
+        const extraNames = [...new Set(charList.map(c => c.character_group || "Ungrouped"))].filter(n => !grpNames.includes(n));
+        const allNames = [...grpNames, ...extraNames];
+        setGroupOrder(allNames);
+        setCollapsed(prev => prev !== null ? prev : new Set(allNames));
         if (charList.length) setSelected(charList[0]);
         setPhase("ready");
       } catch(e) { setErr(e.message); setPhase("error"); }
@@ -200,11 +315,16 @@ export default function Codex() {
 
   const toggleCollapse = (name) => {
     setCollapsed(prev => {
-      const next = new Set(prev);
+      const next = new Set(prev ?? []);
       next.has(name) ? next.delete(name) : next.add(name);
       return next;
     });
   };
+
+  useEffect(() => {
+    if (collapsed === null) return;
+    localStorage.setItem("codex_collapsed_groups", JSON.stringify([...collapsed]));
+  }, [collapsed]);
 
   const onCharDragStart = (e, charId) => {
     draggingCharId.current  = charId;
@@ -240,12 +360,10 @@ export default function Codex() {
       if (!targetGroup) return;
       const char = characters.find(c => c.id === charId);
       if (!char || char.character_group === targetGrpName) return;
-      setCharacters(prev => prev.map(c =>
-        c.id === charId ? { ...c, group_id: targetGroup.id, character_group: targetGrpName } : c
-      ));
-      if (selected?.id === charId)
-        setSelected(prev => ({ ...prev, group_id: targetGroup.id, character_group: targetGrpName }));
-      await supabase.from("characters").update({ group_id: targetGroup.id, character_group: targetGrpName }).eq("id", charId);
+      const updates = { group_id: targetGroup.id, character_group: targetGrpName, link_color: targetGroup.link_color };
+      setCharacters(prev => prev.map(c => c.id === charId ? { ...c, ...updates } : c));
+      if (selected?.id === charId) setSelected(prev => ({ ...prev, ...updates }));
+      await supabase.from("characters").update(updates).eq("id", charId);
       return;
     }
 
@@ -259,6 +377,11 @@ export default function Codex() {
         if (srcIdx === -1 || tgtIdx === -1) return prev;
         next.splice(srcIdx, 1);
         next.splice(tgtIdx, 0, src);
+        // write sort_order back to Supabase for all groups in the table
+        next.forEach((name, i) => {
+          const grp = allGroups.find(g => g.name === name);
+          if (grp) supabase.from("character_groups").update({ sort_order: i + 1 }).eq("id", grp.id);
+        });
         return next;
       });
     }
@@ -281,9 +404,9 @@ export default function Codex() {
         <div style={S.nav}>
           <Link to="/" style={S.back}>← Story</Link>
           <div style={S.vdiv} />
-          <div style={S.logo}>Safe Harbor</div>
-          <div style={S.vdiv} />
-          <span style={S.title}>Character Codex</span>
+          <span style={{ fontSize:15, color:"var(--gold)", fontFamily:"Georgia, serif" }}>
+            {storyTitle ? `${storyTitle.split(':')[0].trim()} Codex` : "Codex"}
+          </span>
         </div>
 
         <div style={S.body}>
@@ -293,7 +416,7 @@ export default function Codex() {
             {phase === "error"   && <div style={{...S.err, margin:12}}>{err}</div>}
             {phase === "ready"   && orderedGroups.map(grpName => {
               const chars      = groupMap[grpName] || [];
-              const isCollapsed = collapsed.has(grpName);
+              const isCollapsed = collapsed?.has(grpName) ?? true;
               const isDragOver  = dragOverGrp === grpName;
               return (
                 <div key={grpName}
@@ -334,7 +457,7 @@ export default function Codex() {
           <div style={S.panel}>
             {!selected
               ? <div style={S.msg}>Select a character.</div>
-              : <DetailPanel key={selected.id} char={selected} />
+              : <DetailPanel key={selected.id} char={selected} onCharUpdate={updated => { setSelected(updated); setCharacters(prev => prev.map(c => c.id === updated.id ? updated : c)); }} />
             }
           </div>
         </div>

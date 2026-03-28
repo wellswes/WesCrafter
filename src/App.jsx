@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Routes, Route } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
 import Codex from "./Codex.jsx";
+import Places from "./Places.jsx";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -143,6 +144,7 @@ function ProseViewer() {
   const [selSc,         setSelSc]         = useState(null);
   const [chMeta,        setChMeta]        = useState(null);
   const [phase,         setPhase]         = useState("loading");
+  const [storyTitle,    setStoryTitle]    = useState("");
   const [err,       setErr]       = useState("");
   const [allChars,  setAllChars]  = useState([]);
   const [allLocs,   setAllLocs]   = useState([]);
@@ -183,9 +185,11 @@ function ProseViewer() {
   useEffect(() => {
     (async () => {
       try {
-        const [chs, chars, locs] = await Promise.all([
-          fetchChapters(), fetchCharacters(), fetchLocations()
+        const [chs, chars, locs, { data: story }] = await Promise.all([
+          fetchChapters(), fetchCharacters(), fetchLocations(),
+          supabase.from("stories").select("title").eq("id", STORY_ID).single(),
         ]);
+        if (story?.title) setStoryTitle(story.title);
         setAllChars(chars);
         setAllLocs(locs);
         if (!chs.length) { setPhase("ready"); return; }
@@ -217,7 +221,10 @@ function ProseViewer() {
 
         {/* nav */}
         <div style={S.nav}>
-          <div style={S.logo}>Safe Harbor</div>
+          <div style={{ display:"flex", flexDirection:"column", lineHeight:1.2 }}>
+            <span style={{ fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" }}>Story</span>
+            <span style={{ fontSize:15, color:"var(--gold)", fontFamily:"Georgia, serif" }}>{storyTitle || "Safe Harbor"}</span>
+          </div>
           <div style={S.vdiv} />
           <div style={S.dWrap}>
             <span style={S.lbl}>Ch.</span>
@@ -347,6 +354,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<ProseViewer />} />
       <Route path="/codex" element={<Codex />} />
+      <Route path="/places" element={<Places />} />
     </Routes>
   );
 }
