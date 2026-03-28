@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "./supabase.js";
 
-const WORLD_ID = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
+const WORLD_ID   = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
+const STORY_ID   = "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3";
 
 const CSS = `
   :root {
@@ -24,14 +25,14 @@ const S = {
   nav:       { background:"var(--bg2)", borderBottom:"1px solid var(--border)", padding:"0 16px", height:48, display:"flex", alignItems:"center", gap:12, flexShrink:0 },
   back:      { fontSize:12, color:"var(--text3)", fontFamily:"sans-serif", textDecoration:"none", flexShrink:0, letterSpacing:"0.04em" },
   vdiv:      { width:1, height:22, background:"var(--border)", flexShrink:0 },
-  logo:      { fontSize:13, fontWeight:"bold", color:"var(--gold)", letterSpacing:"0.07em", fontFamily:"sans-serif", flexShrink:0 },
-  title:     { fontSize:12, color:"var(--text3)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" },
   body:      { flex:1, display:"flex", overflow:"hidden" },
-  sidebar:   { width:220, flexShrink:0, borderRight:"1px solid var(--border)", overflowY:"auto", background:"var(--bg2)", padding:"12px 0" },
+  sidebar:   { width:220, flexShrink:0, overflowY:"auto", background:"var(--bg2)", display:"flex", flexDirection:"column" },
+  secToggle: { display:"flex", borderBottom:"1px solid var(--border)", flexShrink:0 },
+  secBtn:    { flex:1, background:"none", border:"none", cursor:"pointer", padding:"10px 0", fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" },
   grpHeader: { display:"flex", alignItems:"center", gap:6, padding:"14px 14px 5px", cursor:"grab", userSelect:"none" },
   grpLbl:    { fontSize:10, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", flex:1 },
   grpArrow:  { fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", flexShrink:0 },
-  charRow:   { display:"flex", alignItems:"center", gap:9, padding:"6px 14px", cursor:"pointer", fontFamily:"sans-serif", fontSize:13 },
+  charRow:   { display:"flex", alignItems:"center", gap:9, padding:"6px 6px 6px 16px", cursor:"pointer", fontFamily:"sans-serif", fontSize:13 },
   panel:     { flex:1, overflowY:"auto", padding:"0 48px 40px 0" },
   name:      { fontSize:28, color:"var(--gold)", fontWeight:"normal", marginBottom:4 },
   meta:      { fontSize:12, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.05em", marginBottom:16 },
@@ -39,9 +40,29 @@ const S = {
   secBody:   { fontSize:15, lineHeight:1.8, color:"var(--text)", marginBottom:24, textAlign:"left" },
   msg:       { color:"var(--text4)", fontStyle:"italic", fontSize:13, padding:"24px 0", textAlign:"left", fontFamily:"sans-serif" },
   err:       { background:"#1a1210", border:"1px solid #3a2020", borderRadius:5, padding:"14px 18px", color:"#c07060", fontSize:13, fontFamily:"sans-serif", lineHeight:1.6 },
+  // places tree
+  treeItem:  { display:"flex", alignItems:"center", gap:5, padding:"5px 8px", cursor:"pointer", fontFamily:"sans-serif", fontSize:12, borderRadius:3, userSelect:"none" },
+  treeArrow: { fontSize:8, color:"var(--text4)", flexShrink:0, width:10 },
+  treeName:  { flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" },
+  locType:   { fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.06em", textTransform:"uppercase", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:3, padding:"1px 5px", flexShrink:0 },
+  // location detail
+  detName:   { fontSize:22, color:"var(--gold)", fontWeight:"normal", marginBottom:6 },
+  detAtm:    { fontSize:14, color:"var(--text3)", fontStyle:"italic", lineHeight:1.7, marginBottom:16 },
+  detDesc:   { fontSize:15, lineHeight:1.8, color:"var(--text)", marginBottom:20 },
+  // occupants
+  occZone:   { minHeight:52, borderRadius:6, border:"1px dashed var(--border2)", padding:"10px 12px", display:"flex", flexWrap:"wrap", gap:8, alignItems:"flex-start" },
+  occChip:   { display:"flex", alignItems:"center", gap:6, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:20, padding:"3px 8px 3px 3px", fontFamily:"sans-serif", fontSize:12 },
+  occRole:   { fontSize:9, color:"var(--text4)", letterSpacing:"0.06em", textTransform:"uppercase" },
+  occX:      { background:"none", border:"none", cursor:"pointer", color:"var(--text4)", fontSize:10, padding:"0 0 0 3px", lineHeight:1 },
+  rolePick:  { display:"flex", alignItems:"center", gap:6, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:6, padding:"7px 10px", flexWrap:"wrap" },
+  roleBtn:   { background:"var(--bg3)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"3px 8px" },
 };
 
-const TABS = ["Core", "Erotic", "Combat"];
+const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
+
+const TABS         = ["Core", "Erotic", "Combat"];
+const ROLES        = ["owner", "worker", "resident", "regular", "visitor"];
+const PRESENCE     = { regular:70, visitor:30 };
 
 const CORE_FIELDS = [
   { key:"physical_appearance", label:"Appearance" },
@@ -51,7 +72,6 @@ const CORE_FIELDS = [
   { key:"occupation",          label:"Occupation" },
   { key:"species",             label:"Species" },
 ];
-
 const EROTIC_FIELDS = [
   { key:"appearance_detail",  label:"Appearance Detail" },
   { key:"body_attributes",    label:"Body Attributes" },
@@ -60,18 +80,16 @@ const EROTIC_FIELDS = [
   { key:"sensory_cues",       label:"Sensory Cues" },
   { key:"unique_biology",     label:"Unique Biology" },
 ];
-
 const COMBAT_FIELDS = [
-  { key:"archetype",        label:"Archetype" },
-  { key:"abilities",        label:"Abilities" },
-  { key:"spells",           label:"Spells" },
-  { key:"stats",            label:"Stats" },
-  { key:"fighting_style",   label:"Fighting Style" },
-  { key:"equipment_notes",  label:"Equipment Notes" },
+  { key:"archetype",       label:"Archetype" },
+  { key:"abilities",       label:"Abilities" },
+  { key:"spells",          label:"Spells" },
+  { key:"stats",           label:"Stats" },
+  { key:"fighting_style",  label:"Fighting Style" },
+  { key:"equipment_notes", label:"Equipment Notes" },
 ];
 
-const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
-
+// ── FieldList ────────────────────────────────────────────────────────────────
 function FieldList({ data, fields, editing, draft, onDraftChange }) {
   if (!editing) {
     if (!data) return <div style={S.msg}>No data yet.</div>;
@@ -88,24 +106,20 @@ function FieldList({ data, fields, editing, draft, onDraftChange }) {
       </>
     );
   }
-  // edit mode — show all fields as textareas
   return (
     <>
       {fields.map(f => (
         <div key={f.key} style={{ marginBottom:20 }}>
           <div style={S.secLbl}>{f.label}</div>
-          <textarea
-            value={draft[f.key] ?? ""}
-            onChange={e => onDraftChange(f.key, e.target.value)}
-            rows={3}
-            style={{ width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" }}
-          />
+          <textarea value={draft[f.key] ?? ""} onChange={e => onDraftChange(f.key, e.target.value)} rows={3}
+            style={{ width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" }} />
         </div>
       ))}
     </>
   );
 }
 
+// ── DetailPanel (character) ──────────────────────────────────────────────────
 function DetailPanel({ char, onCharUpdate }) {
   const [tab,     setTab]     = useState("Core");
   const [erotic,  setErotic]  = useState(undefined);
@@ -117,34 +131,22 @@ function DetailPanel({ char, onCharUpdate }) {
   const [copied,  setCopied]  = useState(false);
 
   useEffect(() => {
-    setTab("Core");
-    setErotic(undefined);
-    setCombat(undefined);
-    setEditing(false);
-    setLoading(true);
+    setTab("Core"); setErotic(undefined); setCombat(undefined); setEditing(false); setLoading(true);
     Promise.all([
       supabase.from("character_erotic").select("*").eq("character_id", char.id).single(),
       supabase.from("character_combat").select("*").eq("character_id", char.id).single(),
-    ]).then(([{ data: e }, { data: c }]) => {
-      setErotic(e || null);
-      setCombat(c || null);
-      setLoading(false);
-    });
+    ]).then(([{ data: e }, { data: c }]) => { setErotic(e || null); setCombat(c || null); setLoading(false); });
   }, [char.id]);
 
-  const dataForTab = () => tab === "Core" ? char : tab === "Erotic" ? erotic : combat;
+  const dataForTab   = () => tab === "Core" ? char   : tab === "Erotic" ? erotic  : combat;
   const fieldsForTab = () => tab === "Core" ? CORE_FIELDS : tab === "Erotic" ? EROTIC_FIELDS : COMBAT_FIELDS;
 
   const startEdit = () => {
-    const src = dataForTab() || {};
-    const init = {};
+    const src = dataForTab() || {}, init = {};
     fieldsForTab().forEach(f => { init[f.key] = src[f.key] ?? ""; });
-    setDraft(init);
-    setEditing(true);
+    setDraft(init); setEditing(true);
   };
-
   const cancelEdit = () => { setEditing(false); setDraft({}); };
-
   const saveEdit = async () => {
     setSaving(true);
     const payload = {};
@@ -154,19 +156,14 @@ function DetailPanel({ char, onCharUpdate }) {
         await supabase.from("characters").update(payload).eq("id", char.id);
         onCharUpdate({ ...char, ...payload });
       } else if (tab === "Erotic") {
-        await supabase.from("character_erotic").upsert({ ...payload, character_id: char.id }, { onConflict: "character_id" });
-        setErotic(prev => ({ ...(prev || {}), ...payload, character_id: char.id }));
+        await supabase.from("character_erotic").upsert({ ...payload, character_id: char.id }, { onConflict:"character_id" });
+        setErotic(prev => ({ ...(prev||{}), ...payload, character_id: char.id }));
       } else {
-        await supabase.from("character_combat").upsert({ ...payload, character_id: char.id }, { onConflict: "character_id" });
-        setCombat(prev => ({ ...(prev || {}), ...payload, character_id: char.id }));
+        await supabase.from("character_combat").upsert({ ...payload, character_id: char.id }, { onConflict:"character_id" });
+        setCombat(prev => ({ ...(prev||{}), ...payload, character_id: char.id }));
       }
-    } finally {
-      setSaving(false);
-      setEditing(false);
-      setDraft({});
-    }
+    } finally { setSaving(false); setEditing(false); setDraft({}); }
   };
-
   const copyForNovelCrafter = () => {
     const sections = [
       { label:"CORE",   fields:CORE_FIELDS,   data:char },
@@ -181,10 +178,7 @@ function DetailPanel({ char, onCharUpdate }) {
       lines.push("", label);
       for (const f of entries) lines.push(`${f.label}: ${data[f.key]}`);
     }
-    navigator.clipboard.writeText(lines.join("\n")).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    navigator.clipboard.writeText(lines.join("\n")).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   };
 
   const color = char.link_color || "#7a6e62";
@@ -192,78 +186,288 @@ function DetailPanel({ char, onCharUpdate }) {
 
   return (
     <div style={{ display:"flex", gap:28, alignItems:"flex-start" }}>
-      {/* left column — sticky portrait */}
       <div style={{ width:320, flexShrink:0, position:"sticky", top:0 }}>
         {char.portrait_url
           ? <img src={char.portrait_url} alt={char.name} style={{ width:"100%", height:"auto", objectFit:"cover", borderRadius:8, border:`3px solid ${color}`, display:"block" }} />
           : <div style={{ width:"100%", aspectRatio:"1", borderRadius:8, background:color+"22", border:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:80, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{char.name[0]}</div>
         }
       </div>
-
-      {/* right column */}
       <div style={{ flex:1, minWidth:0 }}>
-        {/* name row + action buttons */}
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:4 }}>
           <div style={S.name}>{char.name}</div>
           {!loading && (
             <div style={{ display:"flex", gap:6, flexShrink:0, paddingTop:6 }}>
               <button onClick={copyForNovelCrafter} style={taBtn}>{copied ? "Copied!" : "Copy"}</button>
               {editing
-                ? <>
-                    <button onClick={saveEdit}   disabled={saving} style={{ ...taBtn, color:"var(--gold)",  borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
-                    <button onClick={cancelEdit} disabled={saving} style={taBtn}>Cancel</button>
-                  </>
+                ? <><button onClick={saveEdit} disabled={saving} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
+                     <button onClick={cancelEdit} disabled={saving} style={taBtn}>Cancel</button></>
                 : <button onClick={startEdit} style={taBtn}>Edit</button>
               }
             </div>
           )}
         </div>
         {meta && <div style={S.meta}>{meta}</div>}
-
-        {/* tab bar */}
         <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
           {TABS.map(t => (
             <button key={t} onClick={() => { if (!editing) setTab(t); }} style={{
               background:"none", border:"none", cursor: editing ? "default" : "pointer",
-              padding:"8px 16px 7px",
-              fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase",
+              padding:"8px 16px 7px", fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase",
               color: t === tab ? "var(--gold)" : "var(--text4)",
               borderBottom: t === tab ? "2px solid var(--gold)" : "2px solid transparent",
-              marginBottom:-1,
-              opacity: editing && t !== tab ? 0.4 : 1,
+              marginBottom:-1, opacity: editing && t !== tab ? 0.4 : 1,
             }}>{t}</button>
           ))}
         </div>
-
-        {/* tab content */}
         {loading
           ? <div style={S.msg}>Loading…</div>
-          : <FieldList
-              data={dataForTab()}
-              fields={fieldsForTab()}
-              editing={editing}
-              draft={draft}
-              onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))}
-            />
+          : <FieldList data={dataForTab()} fields={fieldsForTab()} editing={editing} draft={draft}
+              onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))} />
         }
       </div>
     </div>
   );
 }
 
+// ── LocationDetail ───────────────────────────────────────────────────────────
+function LocationDetail({ place, characters }) {
+  const [occupants,   setOccupants]   = useState([]);
+  const [addOpen,     setAddOpen]     = useState(false);
+  const [pendingChar, setPendingChar] = useState(null);
+  const [pendingRole, setPendingRole] = useState("regular");
+
+  const isLocation = place.level === "location";
+
+  const fetchOccupants = useCallback(async () => {
+    if (!isLocation) return;
+    const { data } = await supabase
+      .from("location_characters")
+      .select("id, role, presence_chance, character_id, characters(id, name, portrait_url, link_color)")
+      .eq("location_id", place.id);
+    setOccupants(data || []);
+  }, [place.id, isLocation]);
+
+  useEffect(() => { setOccupants([]); setPendingChar(null); setAddOpen(false); fetchOccupants(); }, [fetchOccupants]);
+
+  const confirmAdd = async () => {
+    if (!pendingChar) return;
+    await supabase.from("location_characters").insert({
+      location_id: place.id, character_id: pendingChar.id,
+      role: pendingRole, presence_chance: PRESENCE[pendingRole] ?? 100,
+    });
+    setPendingChar(null); setAddOpen(false); fetchOccupants();
+  };
+  const removeOccupant = async (lcId) => {
+    await supabase.from("location_characters").delete().eq("id", lcId);
+    setOccupants(prev => prev.filter(o => o.id !== lcId));
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }}>
+        <div style={S.detName}>{place.name}</div>
+        {place.location_type && <span style={S.locType}>{place.location_type}</span>}
+      </div>
+      {place.atmosphere  && <div style={S.detAtm}>{place.atmosphere}</div>}
+      {place.description && <div style={S.detDesc}>{place.description}</div>}
+
+      {isLocation && (
+        <div style={{ marginTop:8 }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+            <div style={S.secLbl}>Occupants</div>
+            <div style={{ position:"relative" }}>
+              <button onClick={() => { setAddOpen(p => !p); setPendingChar(null); }} style={{ ...taBtn, fontSize:10 }}>
+                {addOpen ? "✕ Cancel" : "+ Add Occupant"}
+              </button>
+              {addOpen && !pendingChar && (
+                <div style={{ position:"absolute", right:0, top:"100%", marginTop:4, zIndex:10, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, minWidth:190, maxHeight:260, overflowY:"auto", boxShadow:"0 4px 16px #00000088" }}>
+                  {characters.map(c => {
+                    const color = c.link_color || "#7a6e62";
+                    return (
+                      <div key={c.id} onClick={() => { setPendingChar(c); setPendingRole("regular"); }}
+                        style={{ display:"flex", alignItems:"center", gap:8, padding:"7px 12px", cursor:"pointer", fontFamily:"sans-serif", fontSize:12 }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--bg4)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        {c.portrait_url
+                          ? <img src={c.portrait_url} alt={c.name} style={{ width:22, height:22, borderRadius:"50%", objectFit:"cover", border:`1.5px solid ${color}`, flexShrink:0 }} />
+                          : <div style={{ width:22, height:22, borderRadius:"50%", background:color+"22", border:`1.5px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color, fontFamily:"sans-serif", fontWeight:"bold", flexShrink:0 }}>{c.name[0]}</div>
+                        }
+                        <span style={{ color }}>{c.name}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          {pendingChar && (
+            <div style={{ ...S.rolePick, marginBottom:10 }}>
+              <span style={{ fontSize:12, color:"var(--text3)", fontFamily:"sans-serif" }}>{pendingChar.name} —</span>
+              {ROLES.map(r => (
+                <button key={r} onClick={() => setPendingRole(r)} style={{ ...S.roleBtn, borderColor: pendingRole===r ? "var(--gold2)" : "var(--border2)", color: pendingRole===r ? "var(--gold)" : "var(--text3)" }}>{r}</button>
+              ))}
+              <button onClick={confirmAdd} style={{ ...S.roleBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>Add</button>
+              <button onClick={() => { setPendingChar(null); setAddOpen(false); }} style={S.roleBtn}>✕</button>
+            </div>
+          )}
+          <div style={S.occZone}>
+            {occupants.length === 0 && (
+              <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:12, fontFamily:"sans-serif" }}>No occupants yet.</div>
+            )}
+            {occupants.map(o => {
+              const c = o.characters; if (!c) return null;
+              const color = c.link_color || "#7a6e62";
+              return (
+                <div key={o.id} style={S.occChip}>
+                  {c.portrait_url
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:22, height:22, borderRadius:"50%", objectFit:"cover", border:`1.5px solid ${color}` }} />
+                    : <div style={{ width:22, height:22, borderRadius:"50%", background:color+"22", border:`1.5px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                  }
+                  <div>
+                    <div style={{ color, fontSize:12, fontFamily:"sans-serif" }}>{c.name}</div>
+                    <div style={S.occRole}>{o.role}{(o.role==="regular"||o.role==="visitor")&&o.presence_chance!=null?` · ${o.presence_chance}%`:""}</div>
+                  </div>
+                  <button style={S.occX} onClick={() => removeOccupant(o.id)}>✕</button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PlacesSidebar ────────────────────────────────────────────────────────────
+function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setSelectedPlace }) {
+  const { continents, regions, settlements, locations } = places;
+
+  const getRegions     = cid  => regions.filter(r => r.continent_id === cid);
+  const getSettlements = rid  => settlements.filter(s => s.region_id === rid);
+  const getTopLocs     = sid  => locations.filter(l => l.settlement_id === sid && !l.parent_location_id);
+  const getChildLocs   = pid  => locations.filter(l => l.parent_location_id === pid);
+
+  const indent = (depth) => ({ paddingLeft: depth * 8 });
+
+  const TreeNode = ({ item, level, depth, hasChildren }) => {
+    const isOpen     = !collapsed.has(item.id);
+    const isSelected = selectedPlace?.id === item.id;
+    return (
+      <div>
+        <div
+          style={{ ...S.treeItem, ...indent(depth), background: isSelected ? "var(--bg4)" : "transparent", color: isSelected ? "var(--gold)" : "var(--text)" }}
+          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--bg3)"; }}
+          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? "var(--bg4)" : "transparent"; }}>
+          <span style={S.treeArrow} onClick={e => { e.stopPropagation(); if (hasChildren) toggleCollapsed(item.id); }}>
+            {hasChildren ? (isOpen ? "▾" : "▸") : ""}
+          </span>
+          <span style={S.treeName} onClick={() => setSelectedPlace({ ...item, level })}>
+            {item.name}
+          </span>
+        </div>
+        {hasChildren && isOpen && (
+          <Children item={item} level={level} depth={depth + 1} />
+        )}
+      </div>
+    );
+  };
+
+  const Children = ({ item, level, depth }) => {
+    if (level === "continent") {
+      const kids = getRegions(item.id);
+      return kids.map(r => <TreeNode key={r.id} item={r} level="region" depth={depth} hasChildren={getSettlements(r.id).length > 0} />);
+    }
+    if (level === "region") {
+      const kids = getSettlements(item.id);
+      return kids.map(s => <TreeNode key={s.id} item={s} level="settlement" depth={depth} hasChildren={getTopLocs(s.id).length > 0} />);
+    }
+    if (level === "settlement") {
+      const kids = getTopLocs(item.id);
+      return kids.map(l => <TreeNode key={l.id} item={l} level="location" depth={depth} hasChildren={getChildLocs(l.id).length > 0} />);
+    }
+    if (level === "location") {
+      const kids = getChildLocs(item.id);
+      return kids.map(l => <TreeNode key={l.id} item={l} level="location" depth={depth} hasChildren={getChildLocs(l.id).length > 0} />);
+    }
+    return null;
+  };
+
+  return (
+    <div style={{ flex:1, overflowY:"auto" }}>
+      {continents.map(c => (
+        <TreeNode key={c.id} item={c} level="continent" depth={0} hasChildren={getRegions(c.id).length > 0} />
+      ))}
+    </div>
+  );
+}
+
+// ── Codex ────────────────────────────────────────────────────────────────────
 export default function Codex() {
-  const [characters,  setCharacters]  = useState([]);
-  const [allGroups,   setAllGroups]   = useState([]);
-  const [groupOrder,  setGroupOrder]  = useState([]);
-  const [collapsed,   setCollapsed]   = useState(() => {
+  const [section,      setSection]      = useState("characters");
+  const [charSidebarW, setCharSidebarW] = useState(() => {
+    const saved = localStorage.getItem("codex_sidebar_width_characters");
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const [placesSidebarW, setPlacesSidebarW] = useState(() => {
+    const saved = localStorage.getItem("codex_sidebar_width_places");
+    return saved ? parseInt(saved, 10) : 280;
+  });
+  const resizing      = useRef(false);
+  const resizeStartX  = useRef(0);
+  const resizeStartW  = useRef(0);
+  const currentW      = useRef(280);
+  const sectionRef    = useRef("characters");
+
+  const sidebarWidth    = section === "characters" ? charSidebarW : placesSidebarW;
+  const setSidebarWidth = section === "characters" ? setCharSidebarW : setPlacesSidebarW;
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    resizing.current     = true;
+    resizeStartX.current = e.clientX;
+    resizeStartW.current = sidebarWidth;
+    currentW.current     = sidebarWidth;
+    sectionRef.current   = section;
+    const onMove = (ev) => {
+      if (!resizing.current) return;
+      const w = Math.max(200, Math.min(500, resizeStartW.current + ev.clientX - resizeStartX.current));
+      currentW.current = w;
+      if (sectionRef.current === "characters") setCharSidebarW(w);
+      else setPlacesSidebarW(w);
+    };
+    const onUp = () => {
+      resizing.current = false;
+      const key = sectionRef.current === "characters"
+        ? "codex_sidebar_width_characters"
+        : "codex_sidebar_width_places";
+      localStorage.setItem(key, String(currentW.current));
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup",   onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup",   onUp);
+  };
+
+  // characters
+  const [characters,   setCharacters]   = useState([]);
+  const [allGroups,    setAllGroups]    = useState([]);
+  const [groupOrder,   setGroupOrder]   = useState([]);
+  const [collapsed,    setCollapsed]    = useState(() => {
     const saved = localStorage.getItem("codex_collapsed_groups");
     return saved ? new Set(JSON.parse(saved)) : null;
   });
-  const [selected,    setSelected]    = useState(null);
-  const [storyTitle,  setStoryTitle]  = useState("");
-  const [phase,       setPhase]       = useState("loading");
-  const [err,         setErr]         = useState("");
-  const [dragOverGrp, setDragOverGrp] = useState(null);
+  const [selected,     setSelected]     = useState(null);
+  // places
+  const [places,       setPlaces]       = useState({ continents:[], regions:[], settlements:[], locations:[] });
+  const [placesCollapsed, setPlacesCollapsed] = useState(() => {
+    const saved = localStorage.getItem("codex_collapsed_places");
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  // shared
+  const [storyTitle,   setStoryTitle]   = useState("");
+  const [phase,        setPhase]        = useState("loading");
+  const [err,          setErr]          = useState("");
+  const [dragOverGrp,  setDragOverGrp]  = useState(null);
 
   const draggingCharId  = useRef(null);
   const draggingGrpName = useRef(null);
@@ -271,36 +475,36 @@ export default function Codex() {
   useEffect(() => {
     (async () => {
       try {
-        const [{ data: chars, error: e1 }, { data: grps, error: e2 }, { data: story }] = await Promise.all([
-          supabase
-            .from("characters")
-            .select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, group_id, character_group")
-            .eq("world_id", WORLD_ID)
-            .order("name"),
-          supabase
-            .from("character_groups")
-            .select("id, name, link_color, sort_order")
-            .order("sort_order"),
-          supabase
-            .from("stories")
-            .select("title")
-            .eq("id", "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3")
-            .single(),
+        const [
+          { data: chars,   error: e1 },
+          { data: grps,    error: e2 },
+          { data: story },
+          { data: conts,   error: e3 },
+          { data: regs,    error: e4 },
+          { data: setts,   error: e5 },
+          { data: locs,    error: e6 },
+        ] = await Promise.all([
+          supabase.from("characters").select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, group_id, character_group").eq("world_id", WORLD_ID).order("name"),
+          supabase.from("character_groups").select("id, name, link_color, sort_order").order("sort_order"),
+          supabase.from("stories").select("title").eq("id", STORY_ID).single(),
+          supabase.from("continents").select("id, name"),
+          supabase.from("regions").select("id, name, continent_id"),
+          supabase.from("settlements").select("id, name, description, atmosphere, region_id"),
+          supabase.from("locations").select("id, name, description, atmosphere, settlement_id, parent_location_id, location_type"),
         ]);
-        if (e1) throw e1;
-        if (e2) throw e2;
+        for (const e of [e1, e2, e3, e4, e5, e6]) if (e) throw e;
         if (story?.title) setStoryTitle(story.title);
         const charList = chars || [];
         const grpList  = grps  || [];
         setCharacters(charList);
         setAllGroups(grpList);
-        // order by sort_order from DB; append any group names from chars not in groups table
-        const grpNames = grpList.map(g => g.name);
+        const grpNames   = grpList.map(g => g.name);
         const extraNames = [...new Set(charList.map(c => c.character_group || "Ungrouped"))].filter(n => !grpNames.includes(n));
-        const allNames = [...grpNames, ...extraNames];
+        const allNames   = [...grpNames, ...extraNames];
         setGroupOrder(allNames);
         setCollapsed(prev => prev !== null ? prev : new Set(allNames));
         if (charList.length) setSelected(charList[0]);
+        setPlaces({ continents: conts||[], regions: regs||[], settlements: setts||[], locations: locs||[] });
         setPhase("ready");
       } catch(e) { setErr(e.message); setPhase("error"); }
     })();
@@ -313,6 +517,7 @@ export default function Codex() {
     return acc;
   }, {});
 
+  // ── character collapsed ──
   const toggleCollapse = (name) => {
     setCollapsed(prev => {
       const next = new Set(prev ?? []);
@@ -320,25 +525,35 @@ export default function Codex() {
       return next;
     });
   };
-
   useEffect(() => {
     if (collapsed === null) return;
     localStorage.setItem("codex_collapsed_groups", JSON.stringify([...collapsed]));
   }, [collapsed]);
 
+  // ── places collapsed ──
+  const togglePlacesCollapsed = useCallback((id) => {
+    setPlacesCollapsed(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    localStorage.setItem("codex_collapsed_places", JSON.stringify([...placesCollapsed]));
+  }, [placesCollapsed]);
+
+  // ── character drag/drop for group reassign ──
   const onCharDragStart = (e, charId) => {
     draggingCharId.current  = charId;
     draggingGrpName.current = null;
     e.dataTransfer.effectAllowed = "move";
   };
-
   const onGrpDragStart = (e, grpName) => {
     draggingGrpName.current = grpName;
     draggingCharId.current  = null;
     e.dataTransfer.effectAllowed = "move";
     e.stopPropagation();
   };
-
   const onDragOver = (e, grpName) => {
     e.preventDefault();
     if (draggingCharId.current || (draggingGrpName.current && draggingGrpName.current !== grpName)) {
@@ -346,16 +561,11 @@ export default function Codex() {
       setDragOverGrp(grpName);
     }
   };
-
   const onDragLeave = () => setDragOverGrp(null);
-
   const onDrop = async (e, targetGrpName) => {
-    e.preventDefault();
-    setDragOverGrp(null);
-
+    e.preventDefault(); setDragOverGrp(null);
     if (draggingCharId.current) {
-      const charId = draggingCharId.current;
-      draggingCharId.current = null;
+      const charId = draggingCharId.current; draggingCharId.current = null;
       const targetGroup = allGroups.find(g => g.name === targetGrpName);
       if (!targetGroup) return;
       const char = characters.find(c => c.id === charId);
@@ -366,18 +576,13 @@ export default function Codex() {
       await supabase.from("characters").update(updates).eq("id", charId);
       return;
     }
-
     if (draggingGrpName.current && draggingGrpName.current !== targetGrpName) {
-      const src = draggingGrpName.current;
-      draggingGrpName.current = null;
+      const src = draggingGrpName.current; draggingGrpName.current = null;
       setGroupOrder(prev => {
         const next = [...prev];
-        const srcIdx = next.indexOf(src);
-        const tgtIdx = next.indexOf(targetGrpName);
+        const srcIdx = next.indexOf(src), tgtIdx = next.indexOf(targetGrpName);
         if (srcIdx === -1 || tgtIdx === -1) return prev;
-        next.splice(srcIdx, 1);
-        next.splice(tgtIdx, 0, src);
-        // write sort_order back to Supabase for all groups in the table
+        next.splice(srcIdx, 1); next.splice(tgtIdx, 0, src);
         next.forEach((name, i) => {
           const grp = allGroups.find(g => g.name === name);
           if (grp) supabase.from("character_groups").update({ sort_order: i + 1 }).eq("id", grp.id);
@@ -386,12 +591,7 @@ export default function Codex() {
       });
     }
   };
-
-  const onDragEnd = () => {
-    draggingCharId.current  = null;
-    draggingGrpName.current = null;
-    setDragOverGrp(null);
-  };
+  const onDragEnd = () => { draggingCharId.current = null; draggingGrpName.current = null; setDragOverGrp(null); };
 
   const orderedGroups = groupOrder.filter(name => groupMap[name]);
 
@@ -411,54 +611,94 @@ export default function Codex() {
 
         <div style={S.body}>
           {/* sidebar */}
-          <div style={S.sidebar}>
+          <div style={{ ...S.sidebar, width:sidebarWidth }}>
+            {/* section toggle */}
+            <div style={S.secToggle}>
+              {["characters","places"].map(s => (
+                <button key={s} onClick={() => setSection(s)} style={{
+                  ...S.secBtn,
+                  color:       section === s ? "var(--gold)"   : "var(--text4)",
+                  borderBottom: section === s ? "2px solid var(--gold)" : "2px solid transparent",
+                  background: "none", border:"none", borderBottom: section === s ? "2px solid var(--gold)" : "2px solid transparent",
+                }}>{s}</button>
+              ))}
+            </div>
+
             {phase === "loading" && <div style={{...S.msg, padding:"24px 14px"}}>Loading…</div>}
             {phase === "error"   && <div style={{...S.err, margin:12}}>{err}</div>}
-            {phase === "ready"   && orderedGroups.map(grpName => {
-              const chars      = groupMap[grpName] || [];
-              const isCollapsed = collapsed?.has(grpName) ?? true;
-              const isDragOver  = dragOverGrp === grpName;
-              return (
-                <div key={grpName}
-                  onDragOver={e => onDragOver(e, grpName)}
-                  onDragLeave={onDragLeave}
-                  onDrop={e => onDrop(e, grpName)}
-                  style={{ outline: isDragOver ? "1px solid var(--gold2)" : "1px solid transparent", borderRadius:4, margin:"0 4px" }}>
-                  <div draggable onDragStart={e => onGrpDragStart(e, grpName)} onDragEnd={onDragEnd}
-                    style={S.grpHeader} onClick={() => toggleCollapse(grpName)}>
-                    <span style={S.grpArrow}>{isCollapsed ? "▸" : "▾"}</span>
-                    <span style={S.grpLbl}>{grpName}</span>
-                  </div>
-                  {!isCollapsed && chars.map(c => {
-                    const color    = c.link_color || "#7a6e62";
-                    const isActive = selected?.id === c.id;
-                    return (
-                      <div key={c.id} draggable
-                        onDragStart={e => onCharDragStart(e, c.id)}
-                        onDragEnd={onDragEnd}
-                        style={{ ...S.charRow, background: isActive ? "var(--bg4)" : "transparent", color }}
-                        onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "var(--bg3)"; }}
-                        onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-                        onClick={() => setSelected(c)}>
-                        {c.portrait_url
-                          ? <img src={c.portrait_url} alt={c.name} style={{ width:28, height:28, borderRadius:"50%", objectFit:"cover", border:`1.5px solid ${color}`, flexShrink:0 }} />
-                          : <div style={{ width:28, height:28, borderRadius:"50%", background:color+"22", border:`1.5px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color, fontFamily:"sans-serif", fontWeight:"bold", flexShrink:0 }}>{c.name[0]}</div>
-                        }
-                        {c.name}
+
+            {/* characters section */}
+            {phase === "ready" && section === "characters" && (
+              <div style={{ flex:1, overflowY:"auto" }}>
+                {orderedGroups.map(grpName => {
+                  const chars      = groupMap[grpName] || [];
+                  const isCollapsed = collapsed?.has(grpName) ?? true;
+                  const isDragOver  = dragOverGrp === grpName;
+                  return (
+                    <div key={grpName}
+                      onDragOver={e => onDragOver(e, grpName)}
+                      onDragLeave={onDragLeave}
+                      onDrop={e => onDrop(e, grpName)}
+                      style={{ outline: isDragOver ? "1px solid var(--gold2)" : "1px solid transparent", borderRadius:4, margin:"0 4px" }}>
+                      <div draggable onDragStart={e => onGrpDragStart(e, grpName)} onDragEnd={onDragEnd}
+                        style={S.grpHeader} onClick={() => toggleCollapse(grpName)}>
+                        <span style={S.grpArrow}>{isCollapsed ? "▸" : "▾"}</span>
+                        <span style={S.grpLbl}>{grpName}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
+                      {!isCollapsed && chars.map(c => {
+                        const color    = c.link_color || "#7a6e62";
+                        const isActive = selected?.id === c.id;
+                        return (
+                          <div key={c.id} draggable onDragStart={e => onCharDragStart(e, c.id)} onDragEnd={onDragEnd}
+                            style={{ ...S.charRow, background: isActive ? "var(--bg4)" : "transparent", color }}
+                            onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "var(--bg3)"; }}
+                            onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+                            onClick={() => setSelected(c)}>
+                            {c.portrait_url
+                              ? <img src={c.portrait_url} alt={c.name} style={{ width:28, height:28, borderRadius:"50%", objectFit:"cover", border:`1.5px solid ${color}`, flexShrink:0 }} />
+                              : <div style={{ width:28, height:28, borderRadius:"50%", background:color+"22", border:`1.5px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color, fontFamily:"sans-serif", fontWeight:"bold", flexShrink:0 }}>{c.name[0]}</div>
+                            }
+                            {c.name}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* places section */}
+            {phase === "ready" && section === "places" && (
+              <PlacesSidebar
+                places={places}
+                collapsed={placesCollapsed}
+                toggleCollapsed={togglePlacesCollapsed}
+                selectedPlace={selectedPlace}
+                setSelectedPlace={setSelectedPlace}
+              />
+            )}
           </div>
+
+          {/* resize handle */}
+          <div onMouseDown={onResizeMouseDown}
+            style={{ width:4, flexShrink:0, cursor:"col-resize", background:"transparent" }}
+            onMouseEnter={e => e.currentTarget.style.background = "var(--border2)"}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"} />
 
           {/* detail panel */}
           <div style={S.panel}>
-            {!selected
-              ? <div style={S.msg}>Select a character.</div>
-              : <DetailPanel key={selected.id} char={selected} onCharUpdate={updated => { setSelected(updated); setCharacters(prev => prev.map(c => c.id === updated.id ? updated : c)); }} />
-            }
+            {section === "characters" && (
+              !selected
+                ? <div style={S.msg}>Select a character.</div>
+                : <DetailPanel key={selected.id} char={selected}
+                    onCharUpdate={updated => { setSelected(updated); setCharacters(prev => prev.map(c => c.id === updated.id ? updated : c)); }} />
+            )}
+            {section === "places" && (
+              !selectedPlace
+                ? <div style={S.msg}>Select a location.</div>
+                : <LocationDetail key={selectedPlace.id} place={selectedPlace} characters={characters} />
+            )}
           </div>
         </div>
       </div>
