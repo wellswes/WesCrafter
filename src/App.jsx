@@ -319,9 +319,6 @@ export default function App() {
           {phase==="ready" && scenesWithBeats.length === 0 && <div style={S.msg}>No scenes for this chapter.</div>}
           {phase==="ready" && scenesWithBeats.length > 0 && (
             <>
-              <div style={S.scHdr}>
-                <div style={S.chLbl}>Ch. {chMeta?.sequence_number} — {chMeta?.title}</div>
-              </div>
               {scenesWithBeats.map(({ scene, beats }) => (
                 <div key={scene.id} id={scene.id}>
                   <h2 style={{ fontSize:14, color:"var(--gold)", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:16, marginTop:32, paddingBottom:8, borderBottom:"1px solid var(--border)" }}>
