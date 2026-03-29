@@ -333,38 +333,65 @@ function LocationDetail({ place, characters }) {
 }
 
 // ── PlacesSidebar ────────────────────────────────────────────────────────────
-function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setSelectedPlace }) {
-  const getChildren = parentId =>
-    places.filter(p => (p.parent_id ?? null) === parentId).sort((a, b) => a.name.localeCompare(b.name));
+function TreeNode({ item, depth, places, collapsed, toggleCollapsed, selectedPlace, setSelectedPlace }) {
+  const children = places
+    .filter(p => (p.parent_id ?? null) === item.id)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const hasKids = children.length > 0;
+  const isOpen = !collapsed.has(item.id);
+  const isSelected = selectedPlace?.id === item.id;
 
-  const TreeNode = ({ item, depth }) => {
-    const children   = getChildren(item.id);
-    const hasKids    = children.length > 0;
-    const isOpen     = !collapsed.has(item.id);
-    const isSelected = selectedPlace?.id === item.id;
-    return (
-      <div>
-        <div
-          style={{ ...S.treeItem, paddingLeft: depth * 8 + 8, background: isSelected ? "var(--bg4)" : "transparent", color: isSelected ? "var(--gold)" : "var(--text)" }}
-          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--bg3)"; }}
-          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? "var(--bg4)" : "transparent"; }}>
-          <span style={S.treeArrow} onClick={e => { e.stopPropagation(); if (hasKids) toggleCollapsed(item.id); }}>
-            {hasKids ? (isOpen ? "▾" : "▸") : ""}
-          </span>
-          <span style={S.treeName} onClick={() => setSelectedPlace(item)}>
-            {item.name}
-          </span>
-          {item.place_type && <span style={S.locType}>{item.place_type}</span>}
-        </div>
-        {hasKids && isOpen && children.map(child => <TreeNode key={child.id} item={child} depth={depth + 1} />)}
+  return (
+    <div>
+      <div
+        onClick={() => { if (hasKids) toggleCollapsed(item.id); setSelectedPlace(item); }}
+        onMouseEnter={e => e.currentTarget.style.background = isSelected ? "var(--bg4)" : "var(--bg3)"}
+        onMouseLeave={e => e.currentTarget.style.background = isSelected ? "var(--bg4)" : "transparent"}
+        style={{
+          paddingLeft: depth * 12,
+          paddingTop: 5,
+          paddingBottom: 5,
+          paddingRight: 8,
+          background: isSelected ? "var(--bg4)" : "transparent",
+          color: isSelected ? "var(--gold)" : "var(--text)",
+          cursor: "pointer",
+          fontSize: 12,
+          fontFamily: "sans-serif",
+          userSelect: "none",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          textAlign: "left",
+        }}>
+        {hasKids ? (isOpen ? "▾ " : "▸ ") : "   "}{item.name}
       </div>
-    );
-  };
+      {hasKids && isOpen && children.map(child => (
+        <TreeNode
+          key={child.id}
+          item={child}
+          depth={depth + 1}
+          places={places}
+          collapsed={collapsed}
+          toggleCollapsed={toggleCollapsed}
+          selectedPlace={selectedPlace}
+          setSelectedPlace={setSelectedPlace}
+        />
+      ))}
+    </div>
+  );
+}
 
-  const roots = getChildren(null);
+function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setSelectedPlace }) {
+  const roots = places
+    .filter(p => (p.parent_id ?? null) === null)
+    .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <div style={{ flex:1, overflowY:"auto" }}>
-      {roots.map(p => <TreeNode key={p.id} item={p} depth={0} />)}
+      {roots.map(p => (
+        <TreeNode key={p.id} item={p} depth={0}
+          places={places} collapsed={collapsed} toggleCollapsed={toggleCollapsed}
+          selectedPlace={selectedPlace} setSelectedPlace={setSelectedPlace} />
+      ))}
     </div>
   );
 }
