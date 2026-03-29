@@ -230,10 +230,12 @@ function DetailPanel({ char, onCharUpdate }) {
 
 // ── LocationDetail ───────────────────────────────────────────────────────────
 function LocationDetail({ place, characters }) {
-  const [occupants,   setOccupants]   = useState([]);
-  const [addOpen,     setAddOpen]     = useState(false);
-  const [pendingChar, setPendingChar] = useState(null);
-  const [pendingRole, setPendingRole] = useState("regular");
+  const [occupants,        setOccupants]        = useState([]);
+  const [addOpen,          setAddOpen]          = useState(false);
+  const [pendingChar,      setPendingChar]      = useState(null);
+  const [pendingRole,      setPendingRole]      = useState("regular");
+  const [containers,       setContainers]       = useState([]);
+  const [openContainers,   setOpenContainers]   = useState({});
 
   const fetchOccupants = useCallback(async () => {
     const { data } = await supabase
@@ -243,7 +245,36 @@ function LocationDetail({ place, characters }) {
     setOccupants(data || []);
   }, [place.id]);
 
-  useEffect(() => { setOccupants([]); setPendingChar(null); setAddOpen(false); fetchOccupants(); }, [fetchOccupants]);
+  const fetchContainers = useCallback(async () => {
+    const { data: ctrs } = await supabase
+      .from("containers")
+      .select("id, name, character_id, characters(name)")
+      .eq("place_id", place.id);
+    if (!ctrs?.length) { setContainers([]); return; }
+    const withItems = await Promise.all(ctrs.map(async ctr => {
+      const { data: items } = await supabase
+        .from("items")
+        .select("id, name, description, is_significant, is_worn")
+        .eq("container_id", ctr.id)
+        .order("name");
+      return { ...ctr, items: items || [] };
+    }));
+    setContainers(withItems);
+  }, [place.id]);
+
+  useEffect(() => {
+    setOccupants([]); setPendingChar(null); setAddOpen(false); fetchOccupants();
+    setContainers([]); setOpenContainers({}); fetchContainers();
+  }, [fetchOccupants, fetchContainers]);
+
+  const toggleItem = async (itemId, currentValue) => {
+    const newVal = !currentValue;
+    await supabase.from("items").update({ is_worn: newVal }).eq("id", itemId);
+    setContainers(prev => prev.map(ctr => ({
+      ...ctr,
+      items: ctr.items.map(it => it.id === itemId ? { ...it, is_worn: newVal } : it),
+    })));
+  };
 
   const confirmAdd = async () => {
     if (!pendingChar) return;
@@ -328,6 +359,51 @@ function LocationDetail({ place, characters }) {
             })}
           </div>
         </div>
+
+      {containers.length > 0 && (
+        <div style={{ marginTop:24 }}>
+          <div style={S.secLbl}>Containers</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {containers.map(ctr => {
+              const isOpen = !!openContainers[ctr.id];
+              const ownerName = ctr.characters?.name;
+              return (
+                <div key={ctr.id} style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:6, overflow:"hidden" }}>
+                  <div
+                    onClick={() => setOpenContainers(prev => ({ ...prev, [ctr.id]: !prev[ctr.id] }))}
+                    style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 12px", cursor:"pointer", userSelect:"none" }}>
+                    <div>
+                      <span style={{ fontSize:13, fontFamily:"sans-serif", color:"var(--text)" }}>{ctr.name}</span>
+                      {ownerName && <span style={{ fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", marginLeft:8 }}>· {ownerName}</span>}
+                    </div>
+                    <span style={{ fontSize:10, color:"var(--text4)", fontFamily:"sans-serif" }}>{isOpen ? "▾" : "▸"}</span>
+                  </div>
+                  {isOpen && (
+                    <div style={{ borderTop:"1px solid var(--border)", padding:"8px 12px", display:"flex", flexDirection:"column", gap:6 }}>
+                      {ctr.items.length === 0
+                        ? <div style={{ fontSize:12, color:"var(--text4)", fontStyle:"italic", fontFamily:"sans-serif" }}>No items.</div>
+                        : ctr.items.map(it => (
+                            <div key={it.id} style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                              <div style={{ flex:1 }}>
+                                <div style={{ fontSize:13, fontFamily:"sans-serif", color:"var(--text)", fontWeight: it.is_significant ? "bold" : "normal" }}>{it.name}</div>
+                                {it.description && <div style={{ fontSize:12, color:"var(--text3)", fontStyle:"italic", fontFamily:"sans-serif", lineHeight:1.5, marginTop:2 }}>{it.description}</div>}
+                              </div>
+                              <button
+                                onClick={() => toggleItem(it.id, it.is_worn)}
+                                style={{ flexShrink:0, fontSize:10, fontFamily:"sans-serif", padding:"2px 8px", borderRadius:10, cursor:"pointer", border: it.is_worn ? "1px solid var(--gold)" : "1px solid var(--border2)", background: it.is_worn ? "var(--gold2)" : "var(--bg3)", color: it.is_worn ? "#1a1410" : "var(--text4)" }}>
+                                Worn
+                              </button>
+                            </div>
+                          ))
+                      }
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

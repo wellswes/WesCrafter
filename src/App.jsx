@@ -35,6 +35,7 @@ const CSS = `
   ::-webkit-scrollbar-track { background: var(--bg2); }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse-amber { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
   .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(201,168,108,0.25); border-top-color:#c9a86c; border-radius:50%; animation:spin 0.7s linear infinite; vertical-align:middle; }
 `;
 
@@ -124,10 +125,11 @@ function ProseViewer() {
   const [showMode,        setShowMode]        = useState(false);
   const [showChar,        setShowChar]        = useState(false);
   const [charDropPos,     setCharDropPos]     = useState(null);
-  const [povCharId,      setPovCharId]      = useState(null); // null = default Zep
+  const [povCharacterId, setPovCharacterId] = useState(null);
   const [directive,      setDirective]      = useState("");
   const [generating,     setGenerating]     = useState(false);
-  const [pendingProse,   setPendingProse]   = useState(null); // { prose, directive, sceneId }
+  const [pendingProse,   setPendingProse]   = useState(null); // { prose, directive, sceneId, sceneState }
+  const [uncertainChars, setUncertainChars] = useState({}); // { charId: true }
   const [editingBeatId,  setEditingBeatId]  = useState(null);
   const [editingText,    setEditingText]    = useState("");
   const leftPanelRef  = useRef(null);
@@ -190,6 +192,7 @@ function ProseViewer() {
           if (state.active_character_ids?.length) {
             setSceneChars(chars.filter(c => state.active_character_ids.includes(c.id)));
           }
+          setPovCharacterId(state.pov_character_id || null);
         } else {
           await loadChapter(chs[0]);
         }
@@ -210,7 +213,10 @@ function ProseViewer() {
   }, []);
 
   const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) setSceneChars(p => [...p, c]); setShowChar(false); };
-  const removeChar = id => setSceneChars(p => p.filter(c => c.id !== id));
+  const removeChar = id => {
+    setSceneChars(p => p.filter(c => c.id !== id));
+    setUncertainChars(p => { const n = { ...p }; delete n[id]; return n; });
+  };
   const available  = allChars.filter(c => !sceneChars.find(x => x.id === c.id));
 
   useEffect(() => {
@@ -225,11 +231,12 @@ function ProseViewer() {
         time_of_day:          timeOfDay,
         scene_mode:           mode,
         active_character_ids: sceneChars.map(c => c.id),
+        pov_character_id:     povCharacterId,
         updated_at:           new Date().toISOString(),
       }, { onConflict: "story_id" });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [selCh, selSc, location, locationId, timeOfDay, mode, sceneChars]);
+  }, [selCh, selSc, location, locationId, timeOfDay, mode, sceneChars, povCharacterId]);
 
   const buildStackToParent = (parentId) => {
     const stack = [];
@@ -290,7 +297,7 @@ function ProseViewer() {
       });
       const result = await response.json();
       if (result.error) throw new Error(result.error);
-      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc });
+      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, sceneState: result.scene_state || null });
     } catch (e) {
       alert("Generation failed: " + e.message);
     } finally {
@@ -300,20 +307,101 @@ function ProseViewer() {
 
   const acceptProse = async () => {
     if (!pendingProse) return;
-    const { prose, directive: beatDirective, sceneId } = pendingProse;
+    const { prose, directive: beatDirective, sceneId, sceneState } = pendingProse;
+
+    // Save beat — capture inserted id for snap update
     const currentSwb = scenesWithBeats.find(s => s.scene.id === sceneId);
     const maxSeq = currentSwb?.beats?.length
       ? Math.max(...currentSwb.beats.map(b => b.sequence_number))
       : 0;
-    await supabase.from("beats").insert({
+    const { data: inserted } = await supabase.from("beats").insert({
       scene_id:        sceneId,
       sequence_number: maxSeq + 1,
       type:            "moment",
       directive:       beatDirective,
       prose_text:      prose,
-    });
+    }).select("id").single();
+    const beatId = inserted?.id;
+
     const freshBeats = await fetchBeats(sceneId);
     setScenesWithBeats(prev => prev.map(s => s.scene.id === sceneId ? { ...s, beats: freshBeats } : s));
+
+    // Resolve post-update state values locally (setState is async — compute here for snap)
+    let snapLocationId  = locationId;
+    let snapLocation    = location;
+    let snapTimeOfDay   = timeOfDay;
+    let snapMode        = mode;
+    let snapChars       = [...sceneChars];
+
+    // Apply scene_state updates
+    if (sceneState) {
+      // Location
+      if (sceneState.location) {
+        const { data: matched } = await supabase
+          .from("places")
+          .select("id, name")
+          .ilike("name", sceneState.location)
+          .limit(1)
+          .single();
+        if (matched) {
+          snapLocationId = matched.id;
+          snapLocation   = matched.name;
+          setLocation(matched.name);
+          setLocationId(matched.id);
+        }
+      }
+      // Time of day
+      if (sceneState.time_of_day) {
+        snapTimeOfDay = sceneState.time_of_day;
+        setTimeOfDay(sceneState.time_of_day);
+      }
+      // Mode
+      if (sceneState.mode) {
+        snapMode = sceneState.mode;
+        setMode(sceneState.mode);
+      }
+      // Characters entered
+      if (sceneState.characters?.entered?.length) {
+        const additions = sceneState.characters.entered
+          .map(name => allChars.find(c => c.name.toLowerCase() === name.toLowerCase()))
+          .filter(c => c && !snapChars.find(p => p.id === c.id));
+        if (additions.length) {
+          snapChars = [...snapChars, ...additions];
+          setSceneChars(snapChars);
+        }
+      }
+      // Characters exited
+      if (sceneState.characters?.exited?.length) {
+        const clearExits  = sceneState.characters.exited.filter(x => x.confidence === "clear").map(x => x.name.toLowerCase());
+        const uncertainEx = sceneState.characters.exited.filter(x => x.confidence === "uncertain");
+        if (clearExits.length) {
+          snapChars = snapChars.filter(c => !clearExits.includes(c.name.toLowerCase()));
+          setSceneChars(snapChars);
+        }
+        if (uncertainEx.length) {
+          setUncertainChars(prev => {
+            const next = { ...prev };
+            uncertainEx.forEach(x => {
+              const match = snapChars.find(c => c.name.toLowerCase() === x.name.toLowerCase());
+              if (match) next[match.id] = true;
+            });
+            return next;
+          });
+        }
+      }
+    }
+
+    // Stamp resolved snapshot onto the beat
+    if (beatId) {
+      await supabase.from("beats").update({
+        snap_location_id:          snapLocationId,
+        snap_time_of_day:          snapTimeOfDay,
+        snap_scene_mode:           snapMode,
+        snap_active_character_ids: snapChars.map(c => c.id),
+        snap_pov_character_id:     povCharacterId,
+      }).eq("id", beatId);
+    }
+
     setPendingProse(null);
     setDirective("");
     if (taRef.current) { taRef.current.value = ""; taRef.current.style.height = ""; }
@@ -410,16 +498,26 @@ function ProseViewer() {
           ) : (
             sceneChars.map(c => {
               const color = c.link_color || "#7a6e62";
-              const isPov = povCharId ? c.id === povCharId : c.name === "Zep";
-              const borderColor = isPov ? "var(--gold)" : color;
+              const isPov = c.id === povCharacterId;
+              const isUncertain = !!uncertainChars[c.id];
+              let longPressTimer = null;
+              const togglePov = () => setPovCharacterId(prev => prev === c.id ? null : c.id);
               return (
-                <div key={c.id} title={`${c.name} · double-click to remove`}
+                <div key={c.id} title={`${c.name}${isUncertain ? " · may have left" : ""} · right-click to set POV · double-click to remove`}
                   onDoubleClick={() => removeChar(c.id)}
-                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer" }}>
+                  onContextMenu={e => { e.preventDefault(); togglePov(); }}
+                  onTouchStart={() => { longPressTimer = setTimeout(togglePov, 500); }}
+                  onTouchEnd={() => clearTimeout(longPressTimer)}
+                  onTouchMove={() => clearTimeout(longPressTimer)}
+                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer", position:"relative" }}>
+                  {isUncertain && (
+                    <div style={{ position:"absolute", top:6, right:6, width:10, height:10, borderRadius:"50%", background:"#e8a020", zIndex:2, boxShadow:"0 0 0 2px var(--bg2)", animation:"pulse-amber 1.6s ease-in-out infinite" }} />
+                  )}
                   {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${borderColor}`, display:"block" }} />
-                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${borderColor}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
+                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
                   }
+                  <div style={{ height:3, background: isPov ? "var(--gold)" : "transparent", borderRadius:2, marginTop:2 }} />
                   <div style={{ fontSize:10, fontFamily:"sans-serif", color, textAlign:"center", padding:"4px 4px 0", lineHeight:1.3 }}>{c.name}</div>
                 </div>
               );
