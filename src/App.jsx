@@ -34,6 +34,8 @@ const CSS = `
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: var(--bg2); }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(201,168,108,0.25); border-top-color:#c9a86c; border-radius:50%; animation:spin 0.7s linear infinite; vertical-align:middle; }
 `;
 
 // ── Supabase queries ──────────────────────────────────────────────────────────
@@ -122,10 +124,15 @@ function ProseViewer() {
   const [showMode,        setShowMode]        = useState(false);
   const [showChar,        setShowChar]        = useState(false);
   const [charDropPos,     setCharDropPos]     = useState(null);
+  const [directive,      setDirective]      = useState("");
+  const [generating,     setGenerating]     = useState(false);
+  const [generatedProse, setGeneratedProse] = useState("");
+  const [showModal,      setShowModal]      = useState(false);
   const leftPanelRef  = useRef(null);
   const charRef       = useRef(null);
   const charDropRef   = useRef(null);
   const taRef         = useRef(null);
+  const proseRef      = useRef(null);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -236,6 +243,77 @@ function ProseViewer() {
     const sel = allLocs.find(l => l.id === locationId);
     setLocStack(sel?.parent_id ? buildStackToParent(sel.parent_id) : []);
     setShowLoc(true);
+  };
+
+  const generate = async () => {
+    if (!directive.trim() || generating) return;
+    setGenerating(true);
+    try {
+      // Last 4 scenes of prose context
+      const last4 = scenesWithBeats.slice(-4);
+      const proseContext = last4.map(({ scene, beats }) =>
+        `[${scene.title}]\n${beats.map(b => b.prose_text || "").filter(Boolean).join("\n\n")}`
+      ).join("\n\n---\n\n");
+
+      // Chapter summary + prompt modifier in parallel
+      const [{ data: chData }, { data: pmData }] = await Promise.all([
+        supabase.from("chapters").select("context_summary").eq("id", selCh).single(),
+        supabase.from("app_settings").select("value").eq("key", `prompt_modifier_${mode}`).single(),
+      ]);
+
+      // Character details — fetch extra fields for intimate/combat
+      let sceneCharsWithData = sceneChars;
+      if (sceneChars.length) {
+        let sel = "id, name, role, species, age, occupation, physical_appearance, personality, backstory_summary";
+        if (mode === "intimate") sel += ", erotic_profile";
+        if (mode === "combat")   sel += ", combat_profile";
+        const { data: charData } = await supabase.from("characters").select(sel).in("id", sceneChars.map(c => c.id));
+        if (charData) sceneCharsWithData = charData;
+      }
+
+      const response = await fetch("https://gjvegoinppbpfusttycs.supabase.co/functions/v1/generate-prose", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          directive,
+          proseContext,
+          characters:     sceneCharsWithData,
+          location,
+          timeOfDay,
+          sceneMode:      mode,
+          chapterSummary: chData?.context_summary || "",
+          promptModifier: pmData?.value || "",
+        }),
+      });
+      const result = await response.json();
+      if (result.error) throw new Error(result.error);
+      setGeneratedProse(result.prose || "");
+      setShowModal(true);
+    } catch (e) {
+      alert("Generation failed: " + e.message);
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const acceptProse = async () => {
+    const currentSwb = scenesWithBeats.find(s => s.scene.id === selSc);
+    const maxSeq = currentSwb?.beats?.length
+      ? Math.max(...currentSwb.beats.map(b => b.sequence_number))
+      : 0;
+    await supabase.from("beats").insert({
+      scene_id:        selSc,
+      sequence_number: maxSeq + 1,
+      type:            "moment",
+      directive,
+      prose_text:      generatedProse,
+    });
+    const freshBeats = await fetchBeats(selSc);
+    setScenesWithBeats(prev => prev.map(s => s.scene.id === selSc ? { ...s, beats: freshBeats } : s));
+    setShowModal(false);
+    setDirective("");
+    if (taRef.current) { taRef.current.value = ""; taRef.current.style.height = ""; }
+    setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" }), 80);
   };
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
@@ -457,7 +535,7 @@ function ProseViewer() {
           <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
             {/* PROSE AREA */}
-            <div style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
+            <div ref={proseRef} style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
               {phase==="loading" && (
                 <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, padding:"48px 0", textAlign:"center", fontFamily:"sans-serif" }}>Loading…</div>
               )}
@@ -488,16 +566,54 @@ function ProseViewer() {
             {/* INPUT BAR */}
             <div style={{ flexShrink:0, background:"var(--bg3)", borderTop:"1px solid var(--border)", padding:"10px 16px", display:"flex", gap:10, alignItems:"flex-end" }}>
               <textarea ref={taRef} placeholder="Write a directive…" rows={1}
-                onInput={e => { e.target.style.height="auto"; e.target.style.height=`${e.target.scrollHeight}px`; }}
+                value={directive}
+                onChange={e => setDirective(e.target.value)}
+                onInput={e => { e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight, 120)+"px"; }}
+                onKeyDown={e => { if (e.key==="Enter" && (e.metaKey||e.ctrlKey)) generate(); }}
                 style={{ flex:1, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:13, fontFamily:"sans-serif", lineHeight:1.6, padding:"6px 10px", resize:"none", outline:"none", minHeight:34, maxHeight:120, overflow:"auto" }} />
-              <button disabled style={{ flexShrink:0, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor:"not-allowed", opacity:0.5 }}>
-                Generate
+              <button
+                onClick={generate}
+                disabled={!directive.trim() || generating}
+                style={{ flexShrink:0, background: directive.trim() && !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${directive.trim() && !generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: directive.trim() && !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: directive.trim() && !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+                {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
               </button>
             </div>
           </div>
         </div>
       </div>
       {charDropdown}
+      {showModal && createPortal(
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.78)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+          <div style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:8, maxWidth:700, width:"100%", maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 8px 48px #000000b0" }}>
+            <div style={{ flex:1, overflowY:"auto", padding:"32px 40px" }}>
+              {generating
+                ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13 }}><span className="spin" /> Generating…</div>
+                : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap" }}>{generatedProse}</div>
+              }
+            </div>
+            <div style={{ flexShrink:0, borderTop:"1px solid var(--border)", padding:"14px 24px", display:"flex", gap:10, justifyContent:"flex-end", alignItems:"center" }}>
+              <button
+                onClick={() => { setShowModal(false); setGeneratedProse(""); }}
+                style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
+                Discard
+              </button>
+              <button
+                disabled={generating}
+                onClick={generate}
+                style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
+                Regenerate
+              </button>
+              <button
+                disabled={generating}
+                onClick={acceptProse}
+                style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
+                Accept
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }
