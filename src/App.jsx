@@ -124,14 +124,17 @@ function ProseViewer() {
   const [showMode,        setShowMode]        = useState(false);
   const [showChar,        setShowChar]        = useState(false);
   const [charDropPos,     setCharDropPos]     = useState(null);
+  const [povCharId,      setPovCharId]      = useState(null); // null = default Zep
   const [directive,      setDirective]      = useState("");
   const [generating,     setGenerating]     = useState(false);
-  const [generatedProse, setGeneratedProse] = useState("");
-  const [showModal,      setShowModal]      = useState(false);
+  const [pendingProse,   setPendingProse]   = useState(null); // { prose, directive, sceneId }
+  const [editingBeatId,  setEditingBeatId]  = useState(null);
+  const [editingText,    setEditingText]    = useState("");
   const leftPanelRef  = useRef(null);
   const charRef       = useRef(null);
   const charDropRef   = useRef(null);
   const taRef         = useRef(null);
+  const directiveRef  = useRef(null);
   const proseRef      = useRef(null);
 
   // close loc/char dropdowns on outside click
@@ -287,8 +290,7 @@ function ProseViewer() {
       });
       const result = await response.json();
       if (result.error) throw new Error(result.error);
-      setGeneratedProse(result.prose || "");
-      setShowModal(true);
+      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc });
     } catch (e) {
       alert("Generation failed: " + e.message);
     } finally {
@@ -297,23 +299,34 @@ function ProseViewer() {
   };
 
   const acceptProse = async () => {
-    const currentSwb = scenesWithBeats.find(s => s.scene.id === selSc);
+    if (!pendingProse) return;
+    const { prose, directive: beatDirective, sceneId } = pendingProse;
+    const currentSwb = scenesWithBeats.find(s => s.scene.id === sceneId);
     const maxSeq = currentSwb?.beats?.length
       ? Math.max(...currentSwb.beats.map(b => b.sequence_number))
       : 0;
     await supabase.from("beats").insert({
-      scene_id:        selSc,
+      scene_id:        sceneId,
       sequence_number: maxSeq + 1,
       type:            "moment",
-      directive,
-      prose_text:      generatedProse,
+      directive:       beatDirective,
+      prose_text:      prose,
     });
-    const freshBeats = await fetchBeats(selSc);
-    setScenesWithBeats(prev => prev.map(s => s.scene.id === selSc ? { ...s, beats: freshBeats } : s));
-    setShowModal(false);
+    const freshBeats = await fetchBeats(sceneId);
+    setScenesWithBeats(prev => prev.map(s => s.scene.id === sceneId ? { ...s, beats: freshBeats } : s));
+    setPendingProse(null);
     setDirective("");
     if (taRef.current) { taRef.current.value = ""; taRef.current.style.height = ""; }
     setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" }), 80);
+  };
+
+  const saveBeatProse = async (beatId, text) => {
+    setEditingBeatId(null);
+    await supabase.from("beats").update({ prose_text: text }).eq("id", beatId);
+    setScenesWithBeats(prev => prev.map(sw => ({
+      ...sw,
+      beats: sw.beats.map(b => b.id === beatId ? { ...b, prose_text: text } : b),
+    })));
   };
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
@@ -397,13 +410,15 @@ function ProseViewer() {
           ) : (
             sceneChars.map(c => {
               const color = c.link_color || "#7a6e62";
+              const isPov = povCharId ? c.id === povCharId : c.name === "Zep";
+              const borderColor = isPov ? "var(--gold)" : color;
               return (
                 <div key={c.id} title={`${c.name} · double-click to remove`}
                   onDoubleClick={() => removeChar(c.id)}
                   style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer" }}>
                   {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
-                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${borderColor}`, display:"block" }} />
+                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${borderColor}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
                   }
                   <div style={{ fontSize:10, fontFamily:"sans-serif", color, textAlign:"center", padding:"4px 4px 0", lineHeight:1.3 }}>{c.name}</div>
                 </div>
@@ -479,8 +494,21 @@ function ProseViewer() {
             ) : (
               /* ── normal controls ── */
               <>
-                {/* codex link */}
-                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+                {/* codex link + write button */}
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
+                  <button
+                    onClick={async () => {
+                      if (!chapters.length) return;
+                      const lastCh = chapters[chapters.length - 1];
+                      const scs = await fetchScenes(lastCh.id);
+                      const lastSc = scs[scs.length - 1];
+                      await loadChapter(lastCh, lastSc?.id);
+                      setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior:"smooth" }), 200);
+                      setTimeout(() => directiveRef.current?.focus(), 300);
+                    }}
+                    style={{ width:"100%", textAlign:"center", fontSize:12, color:"#1a1410", fontFamily:"sans-serif", padding:"6px 0", background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, cursor:"pointer", fontWeight:"bold", letterSpacing:"0.03em" }}>
+                    ✍ Write
+                  </button>
                   <Link to="/codex" style={{ display:"block", width:"100%", textAlign:"center", fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.05em", padding:"5px 0", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4 }}>Codex ↗</Link>
                 </div>
 
@@ -556,16 +584,70 @@ function ProseViewer() {
                   {beats.length === 0
                     ? <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>No beats for this scene yet.</div>
                     : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
-                        {beats.map(b => b.prose_text || "").filter(Boolean).join("\n\n")}
+                        {beats.filter(b => b.prose_text).map((b, i) => (
+                          <div key={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0 }}>
+                            {editingBeatId === b.id
+                              ? <textarea
+                                  value={editingText}
+                                  onChange={e => setEditingText(e.target.value)}
+                                  onBlur={() => saveBeatProse(b.id, editingText)}
+                                  onKeyDown={e => { if (e.key === "Escape") setEditingBeatId(null); }}
+                                  autoFocus
+                                  style={{ width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"8px 12px", resize:"vertical", minHeight:120, whiteSpace:"pre-wrap", boxSizing:"border-box" }}
+                                />
+                              : <span
+                                  onClick={() => { setEditingBeatId(b.id); setEditingText(b.prose_text); }}
+                                  style={{ cursor:"text", display:"block" }}
+                                  title="Click to edit"
+                                >
+                                  {b.prose_text}
+                                </span>
+                            }
+                          </div>
+                        ))}
                       </div>
                   }
                 </div>
               ))}
+              {/* PENDING / GENERATING BLOCK */}
+              {phase==="ready" && (generating || (pendingProse && pendingProse.sceneId === selSc)) && (
+                <div style={{ marginTop:32, borderTop:"1px solid var(--border)", paddingTop:24 }}>
+                  {generating && !pendingProse
+                    ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13, fontStyle:"italic" }}>
+                        <span className="spin" /> Generating…
+                      </div>
+                    : <>
+                        <div style={{ fontSize:16, lineHeight:2.0, color:"#c8c0b0", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left", opacity:0.85 }}>
+                          {pendingProse.prose}
+                        </div>
+                        <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
+                          <button
+                            onClick={() => setPendingProse(null)}
+                            style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
+                            Discard
+                          </button>
+                          <button
+                            disabled={generating}
+                            onClick={generate}
+                            style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
+                            Regenerate
+                          </button>
+                          <button
+                            disabled={generating}
+                            onClick={acceptProse}
+                            style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
+                            Accept
+                          </button>
+                        </div>
+                      </>
+                  }
+                </div>
+              )}
             </div>
 
             {/* INPUT BAR */}
             <div style={{ flexShrink:0, background:"var(--bg3)", borderTop:"1px solid var(--border)", padding:"10px 16px", display:"flex", gap:10, alignItems:"flex-end" }}>
-              <textarea ref={taRef} placeholder="Write a directive…" rows={1}
+              <textarea ref={el => { taRef.current = el; directiveRef.current = el; }} placeholder="Write a directive…" rows={1}
                 value={directive}
                 onChange={e => setDirective(e.target.value)}
                 onInput={e => { e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight, 120)+"px"; }}
@@ -582,38 +664,6 @@ function ProseViewer() {
         </div>
       </div>
       {charDropdown}
-      {showModal && createPortal(
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.78)", zIndex:9999, display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
-          <div style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:8, maxWidth:700, width:"100%", maxHeight:"80vh", display:"flex", flexDirection:"column", boxShadow:"0 8px 48px #000000b0" }}>
-            <div style={{ flex:1, overflowY:"auto", padding:"32px 40px" }}>
-              {generating
-                ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13 }}><span className="spin" /> Generating…</div>
-                : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap" }}>{generatedProse}</div>
-              }
-            </div>
-            <div style={{ flexShrink:0, borderTop:"1px solid var(--border)", padding:"14px 24px", display:"flex", gap:10, justifyContent:"flex-end", alignItems:"center" }}>
-              <button
-                onClick={() => { setShowModal(false); setGeneratedProse(""); }}
-                style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
-                Discard
-              </button>
-              <button
-                disabled={generating}
-                onClick={generate}
-                style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
-                Regenerate
-              </button>
-              <button
-                disabled={generating}
-                onClick={acceptProse}
-                style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
-                Accept
-              </button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
     </>
   );
 }
