@@ -235,16 +235,13 @@ function LocationDetail({ place, characters }) {
   const [pendingChar, setPendingChar] = useState(null);
   const [pendingRole, setPendingRole] = useState("regular");
 
-  const isLocation = place.level === "location";
-
   const fetchOccupants = useCallback(async () => {
-    if (!isLocation) return;
     const { data } = await supabase
       .from("location_characters")
       .select("id, role, presence_chance, character_id, characters(id, name, portrait_url, link_color)")
       .eq("location_id", place.id);
     setOccupants(data || []);
-  }, [place.id, isLocation]);
+  }, [place.id]);
 
   useEffect(() => { setOccupants([]); setPendingChar(null); setAddOpen(false); fetchOccupants(); }, [fetchOccupants]);
 
@@ -265,13 +262,12 @@ function LocationDetail({ place, characters }) {
     <div>
       <div style={{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }}>
         <div style={S.detName}>{place.name}</div>
-        {place.location_type && <span style={S.locType}>{place.location_type}</span>}
+        {place.place_type && <span style={S.locType}>{place.place_type}</span>}
       </div>
       {place.atmosphere  && <div style={S.detAtm}>{place.atmosphere}</div>}
       {place.description && <div style={S.detDesc}>{place.description}</div>}
 
-      {isLocation && (
-        <div style={{ marginTop:8 }}>
+      <div style={{ marginTop:8 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
             <div style={S.secLbl}>Occupants</div>
             <div style={{ position:"relative" }}>
@@ -332,70 +328,43 @@ function LocationDetail({ place, characters }) {
             })}
           </div>
         </div>
-      )}
     </div>
   );
 }
 
 // ── PlacesSidebar ────────────────────────────────────────────────────────────
 function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setSelectedPlace }) {
-  const { continents, regions, settlements, locations } = places;
+  const getChildren = parentId =>
+    places.filter(p => (p.parent_id ?? null) === parentId).sort((a, b) => a.name.localeCompare(b.name));
 
-  const getRegions     = cid  => regions.filter(r => r.continent_id === cid);
-  const getSettlements = rid  => settlements.filter(s => s.region_id === rid);
-  const getTopLocs     = sid  => locations.filter(l => l.settlement_id === sid && !l.parent_location_id);
-  const getChildLocs   = pid  => locations.filter(l => l.parent_location_id === pid);
-
-  const indent = (depth) => ({ paddingLeft: depth * 8 });
-
-  const TreeNode = ({ item, level, depth, hasChildren }) => {
+  const TreeNode = ({ item, depth }) => {
+    const children   = getChildren(item.id);
+    const hasKids    = children.length > 0;
     const isOpen     = !collapsed.has(item.id);
     const isSelected = selectedPlace?.id === item.id;
     return (
       <div>
         <div
-          style={{ ...S.treeItem, ...indent(depth), background: isSelected ? "var(--bg4)" : "transparent", color: isSelected ? "var(--gold)" : "var(--text)" }}
+          style={{ ...S.treeItem, paddingLeft: depth * 8 + 8, background: isSelected ? "var(--bg4)" : "transparent", color: isSelected ? "var(--gold)" : "var(--text)" }}
           onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--bg3)"; }}
           onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isSelected ? "var(--bg4)" : "transparent"; }}>
-          <span style={S.treeArrow} onClick={e => { e.stopPropagation(); if (hasChildren) toggleCollapsed(item.id); }}>
-            {hasChildren ? (isOpen ? "▾" : "▸") : ""}
+          <span style={S.treeArrow} onClick={e => { e.stopPropagation(); if (hasKids) toggleCollapsed(item.id); }}>
+            {hasKids ? (isOpen ? "▾" : "▸") : ""}
           </span>
-          <span style={S.treeName} onClick={() => setSelectedPlace({ ...item, level })}>
+          <span style={S.treeName} onClick={() => setSelectedPlace(item)}>
             {item.name}
           </span>
+          {item.place_type && <span style={S.locType}>{item.place_type}</span>}
         </div>
-        {hasChildren && isOpen && (
-          <Children item={item} level={level} depth={depth + 1} />
-        )}
+        {hasKids && isOpen && children.map(child => <TreeNode key={child.id} item={child} depth={depth + 1} />)}
       </div>
     );
   };
 
-  const Children = ({ item, level, depth }) => {
-    if (level === "continent") {
-      const kids = getRegions(item.id);
-      return kids.map(r => <TreeNode key={r.id} item={r} level="region" depth={depth} hasChildren={getSettlements(r.id).length > 0} />);
-    }
-    if (level === "region") {
-      const kids = getSettlements(item.id);
-      return kids.map(s => <TreeNode key={s.id} item={s} level="settlement" depth={depth} hasChildren={getTopLocs(s.id).length > 0} />);
-    }
-    if (level === "settlement") {
-      const kids = getTopLocs(item.id);
-      return kids.map(l => <TreeNode key={l.id} item={l} level="location" depth={depth} hasChildren={getChildLocs(l.id).length > 0} />);
-    }
-    if (level === "location") {
-      const kids = getChildLocs(item.id);
-      return kids.map(l => <TreeNode key={l.id} item={l} level="location" depth={depth} hasChildren={getChildLocs(l.id).length > 0} />);
-    }
-    return null;
-  };
-
+  const roots = getChildren(null);
   return (
     <div style={{ flex:1, overflowY:"auto" }}>
-      {continents.map(c => (
-        <TreeNode key={c.id} item={c} level="continent" depth={0} hasChildren={getRegions(c.id).length > 0} />
-      ))}
+      {roots.map(p => <TreeNode key={p.id} item={p} depth={0} />)}
     </div>
   );
 }
@@ -457,7 +426,7 @@ export default function Codex() {
   });
   const [selected,     setSelected]     = useState(null);
   // places
-  const [places,       setPlaces]       = useState({ continents:[], regions:[], settlements:[], locations:[] });
+  const [places,       setPlaces]       = useState([]);
   const [placesCollapsed, setPlacesCollapsed] = useState(() => {
     const saved = localStorage.getItem("codex_collapsed_places");
     return saved ? new Set(JSON.parse(saved)) : new Set();
@@ -479,20 +448,14 @@ export default function Codex() {
           { data: chars,   error: e1 },
           { data: grps,    error: e2 },
           { data: story },
-          { data: conts,   error: e3 },
-          { data: regs,    error: e4 },
-          { data: setts,   error: e5 },
-          { data: locs,    error: e6 },
+          { data: plcs,    error: e3 },
         ] = await Promise.all([
           supabase.from("characters").select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, group_id, character_group").eq("world_id", WORLD_ID).order("name"),
           supabase.from("character_groups").select("id, name, link_color, sort_order").order("sort_order"),
           supabase.from("stories").select("title").eq("id", STORY_ID).single(),
-          supabase.from("continents").select("id, name"),
-          supabase.from("regions").select("id, name, continent_id"),
-          supabase.from("settlements").select("id, name, description, atmosphere, region_id"),
-          supabase.from("locations").select("id, name, description, atmosphere, settlement_id, parent_location_id, location_type"),
+          supabase.from("places").select("id, name, place_type, parent_id, description, atmosphere").eq("world_id", WORLD_ID).order("name"),
         ]);
-        for (const e of [e1, e2, e3, e4, e5, e6]) if (e) throw e;
+        for (const e of [e1, e2, e3]) if (e) throw e;
         if (story?.title) setStoryTitle(story.title);
         const charList = chars || [];
         const grpList  = grps  || [];
@@ -504,7 +467,7 @@ export default function Codex() {
         setGroupOrder(allNames);
         setCollapsed(prev => prev !== null ? prev : new Set(allNames));
         if (charList.length) setSelected(charList[0]);
-        setPlaces({ continents: conts||[], regions: regs||[], settlements: setts||[], locations: locs||[] });
+        setPlaces(plcs || []);
         setPhase("ready");
       } catch(e) { setErr(e.message); setPhase("error"); }
     })();

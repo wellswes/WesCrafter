@@ -65,8 +65,9 @@ const fetchGroups = async () => {
     .from("character_groups").select("id, name, sort_order").order("sort_order");
   return data || [];
 };
-const fetchLocations = async () => {
-  const { data } = await supabase.from("settlements").select("id, name").order("name");
+const WORLD_ID = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
+const fetchPlaces = async () => {
+  const { data } = await supabase.from("places").select("id, name, place_type, parent_id").eq("world_id", WORLD_ID).order("name");
   return data || [];
 };
 
@@ -113,20 +114,25 @@ function ProseViewer() {
   const [allLocs,         setAllLocs]         = useState([]);
   const [sceneChars,      setSceneChars]      = useState([]);
   const [location,        setLocation]        = useState("Thorncliff Manor");
+  const [locationId,      setLocationId]      = useState(null);
   const [timeOfDay,       setTimeOfDay]       = useState("Evening");
   const [mode,            setMode]            = useState("narrative");
   const [showLoc,         setShowLoc]         = useState(false);
+  const [locStack,        setLocStack]        = useState([]);
+  const [showMode,        setShowMode]        = useState(false);
   const [showChar,        setShowChar]        = useState(false);
   const [charDropPos,     setCharDropPos]     = useState(null);
-  const locRef        = useRef(null);
+  const leftPanelRef  = useRef(null);
   const charRef       = useRef(null);
   const charDropRef   = useRef(null);
   const taRef         = useRef(null);
 
-  // close dropdowns on outside click
+  // close loc/char dropdowns on outside click
   useEffect(() => {
     const h = e => {
-      if (locRef.current  && !locRef.current.contains(e.target))  setShowLoc(false);
+      if (leftPanelRef.current && !leftPanelRef.current.contains(e.target)) {
+        setShowLoc(false); setLocStack([]);
+      }
       if (charRef.current && !charRef.current.contains(e.target) &&
           charDropRef.current && !charDropRef.current.contains(e.target)) setShowChar(false);
     };
@@ -155,7 +161,7 @@ function ProseViewer() {
     (async () => {
       try {
         const [chs, chars, grps, locs, { data: story }, { data: state }] = await Promise.all([
-          fetchChapters(), fetchCharacters(), fetchGroups(), fetchLocations(),
+          fetchChapters(), fetchCharacters(), fetchGroups(), fetchPlaces(),
           supabase.from("stories").select("title").eq("id", STORY_ID).single(),
           supabase.from("scene_state").select("*").eq("story_id", STORY_ID).single(),
         ]);
@@ -166,6 +172,7 @@ function ProseViewer() {
 
         if (state) {
           if (state.location_text) setLocation(state.location_text);
+          if (state.location_id)   setLocationId(state.location_id);
           if (state.time_of_day)   setTimeOfDay(state.time_of_day);
           if (state.scene_mode)    setMode(state.scene_mode);
           const targetCh = chs.find(c => c.id === state.current_chapter_id) || chs[0];
@@ -204,6 +211,7 @@ function ProseViewer() {
         current_chapter_id:   selCh,
         current_scene_id:     selSc,
         location_text:        location,
+        location_id:          locationId,
         time_of_day:          timeOfDay,
         scene_mode:           mode,
         active_character_ids: sceneChars.map(c => c.id),
@@ -211,7 +219,29 @@ function ProseViewer() {
       }, { onConflict: "story_id" });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [selCh, selSc, location, timeOfDay, mode, sceneChars]);
+  }, [selCh, selSc, location, locationId, timeOfDay, mode, sceneChars]);
+
+  const buildStackToParent = (parentId) => {
+    const stack = [];
+    let current = parentId;
+    while (current) {
+      stack.unshift(current);
+      const place = allLocs.find(l => l.id === current);
+      current = place?.parent_id ?? null;
+    }
+    return stack;
+  };
+
+  const openLocPicker = () => {
+    const sel = allLocs.find(l => l.id === locationId);
+    setLocStack(sel?.parent_id ? buildStackToParent(sel.parent_id) : []);
+    setShowLoc(true);
+  };
+
+  const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
+  const visibleLocs = allLocs
+    .filter(l => (l.parent_id ?? null) === currentParentId)
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const openCharDrop = e => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -249,7 +279,14 @@ function ProseViewer() {
             : <>
                 {grouped.map(g => (
                   <div key={g.name}>
-                    <div style={{ padding:"6px 10px 2px", fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" }}>{g.name}</div>
+                    <div
+                      style={{ padding:"6px 10px 2px", fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}
+                      onMouseEnter={e => e.currentTarget.style.color="var(--text)"}
+                      onMouseLeave={e => e.currentTarget.style.color="var(--text4)"}
+                      onClick={() => g.chars.forEach(c => addChar(c))}>
+                      <span>{g.name}</span>
+                      <span style={{ fontSize:11, marginRight:2 }}>+</span>
+                    </div>
                     {g.chars.map(charRow)}
                   </div>
                 ))}
@@ -267,15 +304,13 @@ function ProseViewer() {
     document.body
   ) : null;
 
-  const currentMode = MODES.find(m => m.key === mode) || MODES[0];
-
   return (
     <>
       <style>{CSS}</style>
       <div style={{ height:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* ── PORTRAIT BAND — full width ── */}
-        <div style={{ height:200, flexShrink:0, background:"var(--bg2)", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", padding:"0 16px", overflowX:"auto", gap:10 }}>
+        <div style={{ height:200, flexShrink:0, background:"var(--bg2)", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 16px", overflowX:"auto", gap:10 }}>
           {/* portraits */}
           {sceneChars.length === 0 ? (
             <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>
@@ -287,10 +322,10 @@ function ProseViewer() {
               return (
                 <div key={c.id} title={`${c.name} · double-click to remove`}
                   onDoubleClick={() => removeChar(c.id)}
-                  style={{ flexShrink:0, width:160, display:"flex", flexDirection:"column", cursor:"pointer" }}>
+                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer" }}>
                   {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:160, height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
-                    : <div style={{ width:160, height:175, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
+                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
                   }
                   <div style={{ fontSize:10, fontFamily:"sans-serif", color, textAlign:"center", padding:"4px 4px 0", lineHeight:1.3 }}>{c.name}</div>
                 </div>
@@ -303,80 +338,119 @@ function ProseViewer() {
         <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
 
           {/* LEFT PANEL */}
-          <div style={{ width:220, flexShrink:0, background:"var(--bg2)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", overflowY:"auto" }}>
+          <div ref={leftPanelRef} style={{ width:220, flexShrink:0, background:"var(--bg2)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
-            {/* codex link */}
-            <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
-              <Link to="/codex" style={{ display:"block", width:"100%", textAlign:"center", fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.05em", padding:"5px 0", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4 }}>Codex ↗</Link>
-            </div>
-
-            {/* + character */}
-            <div ref={charRef} style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
-              <button onClick={openCharDrop} style={{ width:"100%", background:"none", border:"1px dashed var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"5px 0" }}>
-                + character
-              </button>
-            </div>
-
-            {/* chapter + scene */}
-            <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
-              <select style={selFull} value={selCh||""} onChange={onChapter} disabled={phase==="loading"}>
-                {chapters.map(c => <option key={c.id} value={c.id}>{c.sequence_number}. {c.title}</option>)}
-              </select>
-              <select style={selFull} value={selSc||""} onChange={onScene} disabled={phase==="loading"||!scenes.length}>
-                {scenes.map(s => <option key={s.id} value={s.id}>{s.sequence_number}. {s.title}</option>)}
-              </select>
-            </div>
-
-            {/* location + time */}
-            <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
-              <div ref={locRef} style={{ position:"relative" }}>
-                <button style={fullBtn} onClick={() => setShowLoc(p => !p)}>
-                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{location}</span>
-                  <span style={{ fontSize:9, color:"var(--text4)", flexShrink:0 }}>▾</span>
-                </button>
-                {showLoc && (
-                  <div style={dropBase}>
-                    {allLocs.length === 0
-                      ? <div style={{ padding:"8px 10px", fontSize:12, color:"var(--text4)", fontStyle:"italic", fontFamily:"sans-serif" }}>No locations yet</div>
-                      : allLocs.map(l => (
-                        <div key={l.id} style={dropItem}
-                          onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
-                          onMouseLeave={e => e.currentTarget.style.background="transparent"}
-                          onClick={() => { setLocation(l.name); setShowLoc(false); }}>
-                          {l.name}
-                        </div>
-                      ))
-                    }
-                    <div style={{ borderTop:"1px solid var(--border)", padding:"6px 8px" }}>
-                      <input placeholder="Type location…"
-                        style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, padding:"4px 8px", width:"100%", fontFamily:"sans-serif", outline:"none" }}
-                        onKeyDown={e => { if (e.key==="Enter" && e.target.value.trim()) { setLocation(e.target.value.trim()); setShowLoc(false); }}} />
-                    </div>
+            {showLoc ? (
+              <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+                {locStack.length > 0 && (
+                  <div
+                    onClick={() => setLocStack(p => p.slice(0, -1))}
+                    style={{ padding:"8px 12px", cursor:"pointer", color:"var(--gold)", fontFamily:"sans-serif", fontSize:12, borderBottom:"1px solid var(--border)", flexShrink:0 }}>
+                    ← Back
                   </div>
                 )}
+                <div style={{ overflowY:"auto", flex:1 }}>
+                  {visibleLocs.map(l => {
+                    const kids = allLocs.some(x => x.parent_id === l.id);
+                    return (
+                      <div
+                        key={l.id}
+                        onClick={() => {
+                          setLocation(l.name);
+                          setLocationId(l.id);
+                          if (kids) {
+                            setLocStack(p => [...p, l.id]);
+                          } else {
+                            setShowLoc(false);
+                            setLocStack([]);
+                          }
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+                        onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                        style={{ padding:"8px 12px", cursor:"pointer", color:"var(--text)", fontFamily:"sans-serif", fontSize:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                        <span>{l.name}</span>
+                        {kids && <span style={{ color:"var(--text4)" }}>›</span>}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              <select style={selFull} value={timeOfDay} onChange={e => setTimeOfDay(e.target.value)}>
-                {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+            ) : showMode ? (
+              /* ── inline mode picker ── */
+              <>
+                <div style={{ padding:"6px 8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+                  <button
+                    onClick={() => setShowMode(false)}
+                    style={{ width:"100%", background:"none", border:"none", color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", textAlign:"left", padding:"3px 2px" }}>
+                    ✕ Cancel
+                  </button>
+                </div>
+                <div style={{ flex:1, overflowY:"auto" }}>
+                  {MODES.map(m => (
+                    <div key={m.key}
+                      style={{ padding:"7px 10px", fontSize:12, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", gap:8, color: mode===m.key ? m.color : "var(--text)" }}
+                      onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+                      onMouseLeave={e => e.currentTarget.style.background="transparent"}
+                      onClick={() => { setMode(m.key); setShowMode(false); }}>
+                      <span style={{ width:7, height:7, borderRadius:"50%", flexShrink:0, display:"inline-block", background:m.color }} />
+                      {m.label}
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              /* ── normal controls ── */
+              <>
+                {/* codex link */}
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+                  <Link to="/codex" style={{ display:"block", width:"100%", textAlign:"center", fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.05em", padding:"5px 0", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4 }}>Codex ↗</Link>
+                </div>
 
-            {/* mode */}
-            <div style={{ padding:"8px", flexShrink:0, display:"flex", flexDirection:"column", gap:2 }}>
-              {MODES.map(m => (
-                <button key={m.key} onClick={() => setMode(m.key)} style={{
-                  display:"flex", alignItems:"center", gap:7,
-                  background: mode===m.key ? "var(--bg4)" : "none",
-                  border: mode===m.key ? `1px solid ${m.color}55` : "1px solid transparent",
-                  borderRadius:4, padding:"4px 7px", cursor:"pointer",
-                  fontFamily:"sans-serif", fontSize:12,
-                  color: mode===m.key ? m.color : "var(--text4)",
-                  textAlign:"left", width:"100%",
-                }}>
-                  <span style={{ width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block", background: mode===m.key ? m.color : "var(--text4)" }} />
-                  {m.label}
-                </button>
-              ))}
-            </div>
+                {/* + character */}
+                <div ref={charRef} style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+                  <button onClick={openCharDrop} style={{ width:"100%", background:"none", border:"1px dashed var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"5px 0" }}>
+                    + character
+                  </button>
+                </div>
+
+                {/* chapter + scene */}
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
+                  <select style={selFull} value={selCh||""} onChange={onChapter} disabled={phase==="loading"}>
+                    {chapters.map(c => <option key={c.id} value={c.id}>{c.sequence_number}. {c.title}</option>)}
+                  </select>
+                  <select style={selFull} value={selSc||""} onChange={onScene} disabled={phase==="loading"||!scenes.length}>
+                    {scenes.map(s => <option key={s.id} value={s.id}>{s.sequence_number}. {s.title}</option>)}
+                  </select>
+                </div>
+
+                {/* location + time */}
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
+                  <button style={fullBtn} onClick={openLocPicker}>
+                    <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{location}</span>
+                    <span style={{ fontSize:9, color:"var(--text4)", flexShrink:0 }}>▾</span>
+                  </button>
+                  <select style={selFull} value={timeOfDay} onChange={e => setTimeOfDay(e.target.value)}>
+                    {TIMES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+
+                {/* mode */}
+                <div style={{ padding:"8px", flexShrink:0 }}>
+                  {(() => {
+                    const m = MODES.find(m => m.key === mode) || MODES[0];
+                    return (
+                      <button style={fullBtn} onClick={() => setShowMode(true)}>
+                        <span style={{ display:"flex", alignItems:"center", gap:7, overflow:"hidden" }}>
+                          <span style={{ width:7, height:7, borderRadius:"50%", flexShrink:0, display:"inline-block", background:m.color }} />
+                          <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:m.color }}>{m.label}</span>
+                        </span>
+                        <span style={{ fontSize:9, color:"var(--text4)", flexShrink:0 }}>▾</span>
+                      </button>
+                    );
+                  })()}
+                </div>
+              </>
+            )}
           </div>
 
           {/* MAIN AREA */}
