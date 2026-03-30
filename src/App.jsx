@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Routes, Route, Link } from "react-router-dom";
 import { createClient } from "@supabase/supabase-js";
@@ -54,7 +54,7 @@ const fetchScenes = async (chapterId) => {
 };
 const fetchBeats = async (sceneId) => {
   const { data } = await supabase
-    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text")
+    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id")
     .eq("scene_id", sceneId).order("sequence_number", { ascending: true });
   return data || [];
 };
@@ -132,12 +132,20 @@ function ProseViewer() {
   const [uncertainChars, setUncertainChars] = useState({}); // { charId: true }
   const [editingBeatId,  setEditingBeatId]  = useState(null);
   const [editingText,    setEditingText]    = useState("");
+  const [activeBeatId,   setActiveBeatId]   = useState(null);
+  const prevActiveBeatIdRef = useRef(null);
   const leftPanelRef  = useRef(null);
   const charRef       = useRef(null);
   const charDropRef   = useRef(null);
   const taRef         = useRef(null);
   const directiveRef  = useRef(null);
   const proseRef      = useRef(null);
+  const beatClickRef      = useRef(null);
+  const beatRefs          = useRef({});
+  const candidateBeatRef  = useRef(null);
+  const snapDebounceRef   = useRef(null);
+  const observerRef       = useRef(null);
+  const scrollContainerRef = useRef(null);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -391,6 +399,20 @@ function ProseViewer() {
       }
     }
 
+    // Flush scene_state immediately (don't wait for debounce)
+    await supabase.from("scene_state").upsert({
+      story_id:             STORY_ID,
+      current_chapter_id:   selCh,
+      current_scene_id:     sceneId,
+      location_text:        snapLocation,
+      location_id:          snapLocationId,
+      time_of_day:          snapTimeOfDay,
+      scene_mode:           snapMode,
+      active_character_ids: snapChars.map(c => c.id),
+      pov_character_id:     povCharacterId,
+      updated_at:           new Date().toISOString(),
+    }, { onConflict: "story_id" });
+
     // Stamp resolved snapshot onto the beat
     if (beatId) {
       await supabase.from("beats").update({
@@ -416,6 +438,85 @@ function ProseViewer() {
       beats: sw.beats.map(b => b.id === beatId ? { ...b, prose_text: text } : b),
     })));
   };
+
+  // Clear active beat when scene changes
+  useEffect(() => { setActiveBeatId(null); }, [selSc]);
+
+  // Load snap state from a beat into the UI
+  const loadBeatSnap = (beat) => {
+    const hasSnap = beat.snap_location_id || beat.snap_time_of_day ||
+                    beat.snap_scene_mode || beat.snap_active_character_ids?.length ||
+                    beat.snap_pov_character_id;
+    if (!hasSnap) return;
+    if (beat.snap_active_character_ids?.length) {
+      const chars = beat.snap_active_character_ids.map(id => allChars.find(c => c.id === id)).filter(Boolean);
+      setSceneChars(chars);
+    }
+    if (beat.snap_location_id) {
+      const loc = allLocs.find(l => l.id === beat.snap_location_id);
+      if (loc) { setLocation(loc.name); setLocationId(loc.id); }
+    }
+    if (beat.snap_time_of_day) setTimeOfDay(beat.snap_time_of_day);
+    if (beat.snap_scene_mode)  setMode(beat.snap_scene_mode);
+    setPovCharacterId(beat.snap_pov_character_id ?? null);
+  };
+
+  // Scroll-driven snap: on scroll, find the beat closest to center and apply its snap
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const beats = scenesWithBeats.flatMap(s => s.beats);
+    if (!beats.length) return;
+
+    let timer = null;
+    const handleScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const containerRect = container.getBoundingClientRect();
+        const centerY = containerRect.top + containerRect.height / 2;
+        let closest = null;
+        let closestDist = Infinity;
+        beats.forEach(b => {
+          const el = beatRefs.current[b.id];
+          if (!el) return;
+          const rect = el.getBoundingClientRect();
+          const dist = Math.abs((rect.top + rect.height / 2) - centerY);
+          if (dist < closestDist) { closestDist = dist; closest = b; }
+        });
+        if (!closest) return;
+        if (closest.snap_active_character_ids?.length) {
+          const snapChars = allChars.filter(c => closest.snap_active_character_ids.includes(c.id));
+          setSceneChars(snapChars);
+        }
+        if (closest.snap_scene_mode) setMode(closest.snap_scene_mode);
+        if (closest.snap_time_of_day) setTimeOfDay(closest.snap_time_of_day);
+        if (closest.snap_location_id) {
+          const snapPlace = allLocs.find(l => l.id === closest.snap_location_id);
+          if (snapPlace) { setLocationId(snapPlace.id); setLocation(snapPlace.name); }
+        }
+      }, 300);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => { container.removeEventListener('scroll', handleScroll); clearTimeout(timer); };
+  }, [scenesWithBeats, allChars, allLocs]);
+
+  // Write-back snap columns whenever UI state changes while a beat is active.
+  // Skip the first effect firing when activeBeatId itself changes (that's the snap load).
+  useEffect(() => {
+    if (!activeBeatId) return;
+    if (activeBeatId !== prevActiveBeatIdRef.current) {
+      prevActiveBeatIdRef.current = activeBeatId;
+      return;
+    }
+    supabase.from("beats").update({
+      snap_location_id:          locationId,
+      snap_time_of_day:          timeOfDay,
+      snap_scene_mode:           mode,
+      snap_active_character_ids: sceneChars.map(c => c.id),
+      snap_pov_character_id:     povCharacterId,
+    }).eq("id", activeBeatId);
+  }, [activeBeatId, sceneChars, locationId, timeOfDay, mode, povCharacterId]);
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
   const visibleLocs = allLocs
@@ -661,7 +762,7 @@ function ProseViewer() {
           <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
             {/* PROSE AREA */}
-            <div ref={proseRef} style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
+            <div ref={el => { proseRef.current = el; scrollContainerRef.current = el; }} style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
               {phase==="loading" && (
                 <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, padding:"48px 0", textAlign:"center", fontFamily:"sans-serif" }}>Loading…</div>
               )}
@@ -683,7 +784,7 @@ function ProseViewer() {
                     ? <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>No beats for this scene yet.</div>
                     : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
                         {beats.filter(b => b.prose_text).map((b, i) => (
-                          <div key={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0 }}>
+                          <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingLeft: 10, paddingBottom: "1.2rem", marginBottom: "1.2rem", transition:"border-color 0.15s" }}>
                             {editingBeatId === b.id
                               ? <textarea
                                   value={editingText}
@@ -694,9 +795,26 @@ function ProseViewer() {
                                   style={{ width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"8px 12px", resize:"vertical", minHeight:120, whiteSpace:"pre-wrap", boxSizing:"border-box" }}
                                 />
                               : <span
-                                  onClick={() => { setEditingBeatId(b.id); setEditingText(b.prose_text); }}
+                                  onClick={() => {
+                                    clearTimeout(beatClickRef.current);
+                                    beatClickRef.current = setTimeout(() => {
+                                      setActiveBeatId(b.id);
+                                      const snapChars = allChars?.filter(c => b.snap_active_character_ids?.includes(c.id));
+                                      if (snapChars && snapChars.length > 0) setSceneChars(snapChars);
+                                      if (b.snap_scene_mode) setMode(b.snap_scene_mode);
+                                      if (b.snap_time_of_day) setTimeOfDay(b.snap_time_of_day);
+                                      const snapPlace = allLocs?.find(l => l.id === b.snap_location_id);
+                                      if (snapPlace) { setLocationId(snapPlace.id); setLocation(snapPlace.name); }
+                                      if (b.snap_pov_character_id) setPovCharacterId(b.snap_pov_character_id);
+                                    }, 220);
+                                  }}
+                                  onDoubleClick={() => {
+                                    clearTimeout(beatClickRef.current);
+                                    setEditingBeatId(b.id);
+                                    setEditingText(b.prose_text);
+                                  }}
                                   style={{ cursor:"text", display:"block" }}
-                                  title="Click to edit"
+                                  title="Click to load snap · Double-click to edit"
                                 >
                                   {b.prose_text}
                                 </span>
