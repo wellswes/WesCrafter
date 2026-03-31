@@ -37,6 +37,8 @@ const CSS = `
   @keyframes spin { to { transform: rotate(360deg); } }
   @keyframes pulse-amber { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
   .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(201,168,108,0.25); border-top-color:#c9a86c; border-radius:50%; animation:spin 0.7s linear infinite; vertical-align:middle; }
+  select optgroup { color:#c9a86c; font-size:10px; font-family:sans-serif; letter-spacing:0.08em; font-style:normal; }
+  select option { color:#ffffff; font-family:sans-serif; font-size:12px; }
 `;
 
 // ── Supabase queries ──────────────────────────────────────────────────────────
@@ -104,9 +106,10 @@ const dropItem = {
 
 // ── ProseViewer ───────────────────────────────────────────────────────────────
 function ProseViewer() {
-  const [chapters,        setChapters]        = useState([]);
-  const [scenes,          setScenes]          = useState([]);
-  const [scenesWithBeats, setScenesWithBeats] = useState([]);
+  const [chapters,           setChapters]           = useState([]);
+  const [scenes,             setScenes]             = useState([]);
+  const [scenesWithBeats,    setScenesWithBeats]    = useState([]);
+  const [allScenesByChapter, setAllScenesByChapter] = useState({});
   const [selCh,           setSelCh]           = useState(null);
   const [selSc,           setSelSc]           = useState(null);
   const [phase,           setPhase]           = useState("loading");
@@ -190,6 +193,12 @@ function ProseViewer() {
         if (!chs.length) { setPhase("ready"); return; }
         setChapters(chs);
 
+        // Preload scene lists for all chapters (no beats — just metadata for the combined nav select)
+        const allScenesArrays = await Promise.all(chs.map(ch => fetchScenes(ch.id)));
+        const sceneMap = {};
+        chs.forEach((ch, i) => { sceneMap[ch.id] = allScenesArrays[i]; });
+        setAllScenesByChapter(sceneMap);
+
         if (state) {
           if (state.location_text) setLocation(state.location_text);
           if (state.location_id)   setLocationId(state.location_id);
@@ -209,16 +218,19 @@ function ProseViewer() {
     })();
   }, [loadChapter]);
 
-  const onChapter = useCallback(async e => {
-    const ch = chapters.find(c => c.id === e.target.value);
-    if (ch) await loadChapter(ch);
-  }, [chapters, loadChapter]);
-
-  const onScene = useCallback(e => {
-    const id = e.target.value;
-    setSelSc(id);
-    document.getElementById(id)?.scrollIntoView({ behavior:"smooth" });
-  }, []);
+  const onCombinedSelect = useCallback(async e => {
+    const sceneId = e.target.value;
+    if (!sceneId) return;
+    const ch = chapters.find(c => (allScenesByChapter[c.id] || []).some(s => s.id === sceneId));
+    if (!ch) return;
+    if (ch.id !== selCh) {
+      await loadChapter(ch, sceneId);
+      setTimeout(() => document.getElementById(sceneId)?.scrollIntoView({ behavior:"smooth" }), 100);
+    } else {
+      setSelSc(sceneId);
+      document.getElementById(sceneId)?.scrollIntoView({ behavior:"smooth" });
+    }
+  }, [chapters, allScenesByChapter, selCh, loadChapter]);
 
   const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) setSceneChars(p => [...p, c]); setShowChar(false); };
   const removeChar = id => {
@@ -590,7 +602,7 @@ function ProseViewer() {
       <div style={{ height:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* ── PORTRAIT BAND — full width ── */}
-        <div style={{ height:200, flexShrink:0, background:"var(--bg2)", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 16px", overflowX:"auto", gap:10 }}>
+        <div style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 16px", overflowX:"auto", gap:10, backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
           {/* portraits */}
           {sceneChars.length === 0 ? (
             <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>
@@ -615,8 +627,8 @@ function ProseViewer() {
                     <div style={{ position:"absolute", top:6, right:6, width:10, height:10, borderRadius:"50%", background:"#e8a020", zIndex:2, boxShadow:"0 0 0 2px var(--bg2)", animation:"pulse-amber 1.6s ease-in-out infinite" }} />
                   )}
                   {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:175, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
-                    : <div style={{ width:"100%", height:175, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:215, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
+                    : <div style={{ width:"100%", height:215, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
                   }
                   <div style={{ height:3, background: isPov ? "var(--gold)" : "transparent", borderRadius:2, marginTop:2 }} />
                   <div style={{ fontSize:10, fontFamily:"sans-serif", color, textAlign:"center", padding:"4px 4px 0", lineHeight:1.3 }}>{c.name}</div>
@@ -694,7 +706,8 @@ function ProseViewer() {
               /* ── normal controls ── */
               <>
                 {/* codex link + write button */}
-                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <Link to="/codex" style={{ fontSize:11, color:"var(--gold2)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.04em", padding:"5px 4px", cursor:"pointer" }}>← Codex</Link>
                   <button
                     onClick={async () => {
                       if (!chapters.length) return;
@@ -705,10 +718,9 @@ function ProseViewer() {
                       setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior:"smooth" }), 200);
                       setTimeout(() => directiveRef.current?.focus(), 300);
                     }}
-                    style={{ width:"100%", textAlign:"center", fontSize:12, color:"#1a1410", fontFamily:"sans-serif", padding:"6px 0", background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, cursor:"pointer", fontWeight:"bold", letterSpacing:"0.03em" }}>
-                    ✍ Write
+                    style={{ fontSize:11, color:"var(--gold)", fontFamily:"sans-serif", background:"none", border:"none", padding:"5px 4px", cursor:"pointer", letterSpacing:"0.04em" }}>
+                    Write →
                   </button>
-                  <Link to="/codex" style={{ display:"block", width:"100%", textAlign:"center", fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.05em", padding:"5px 0", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4 }}>Codex ↗</Link>
                 </div>
 
                 {/* + character */}
@@ -718,13 +730,18 @@ function ProseViewer() {
                   </button>
                 </div>
 
-                {/* chapter + scene */}
-                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", flexDirection:"column", gap:6 }}>
-                  <select style={selFull} value={selCh||""} onChange={onChapter} disabled={phase==="loading"}>
-                    {chapters.map(c => <option key={c.id} value={c.id}>{c.sequence_number}. {c.title}</option>)}
-                  </select>
-                  <select style={selFull} value={selSc||""} onChange={onScene} disabled={phase==="loading"||!scenes.length}>
-                    {scenes.map(s => <option key={s.id} value={s.id}>{s.sequence_number}. {s.title}</option>)}
+                {/* combined chapter + scene nav */}
+                <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
+                  <select style={{ ...selFull, color:"var(--gold)" }} value={selSc||""} onChange={onCombinedSelect} disabled={phase==="loading"}>
+                    {chapters.map(ch => (
+                      <optgroup key={ch.id} label={`${ch.sequence_number}. ${ch.title.toUpperCase()}`}>
+                        {(allScenesByChapter[ch.id] || []).map(s => (
+                          <option key={s.id} value={s.id} style={{ color:"var(--text)", paddingLeft:8 }}>
+                            {"\u00a0\u00a0"}{s.sequence_number}. {s.title}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
                   </select>
                 </div>
 
