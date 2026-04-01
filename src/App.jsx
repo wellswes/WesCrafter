@@ -242,7 +242,7 @@ function ProseViewer() {
   };
 
   const acceptProse = async () => {
-    if (!pendingProse) return;
+if (!pendingProse) return;
     const { prose, directive: beatDirective, sceneId, sceneState } = pendingProse;
 
     // Save beat — capture inserted id for snap update
@@ -601,14 +601,33 @@ function ProseViewer() {
                         {beats.filter(b => b.prose_text).map((b, i) => (
                           <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingLeft: 10, paddingBottom: "1.2rem", marginBottom: "1.2rem", transition:"border-color 0.15s" }}>
                             {editingBeatId === b.id
-                              ? <textarea
-                                  value={editingText}
-                                  onChange={e => setEditingText(e.target.value)}
-                                  onBlur={() => saveBeatProse(b.id, editingText)}
-                                  onKeyDown={e => { if (e.key === "Escape") setEditingBeatId(null); }}
-                                  autoFocus
-                                  style={{ width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"8px 12px", resize:"vertical", minHeight:120, whiteSpace:"pre-wrap", boxSizing:"border-box" }}
-                                />
+                              ? <div>
+                                  <textarea
+                                    value={editingText}
+                                    onChange={e => setEditingText(e.target.value)}
+                                    onBlur={() => saveBeatProse(b.id, editingText)}
+                                    onKeyDown={e => { if (e.key === "Escape") setEditingBeatId(null); }}
+                                    autoFocus
+                                    style={{ width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"8px 12px", resize:"vertical", minHeight:120, whiteSpace:"pre-wrap", boxSizing:"border-box" }}
+                                  />
+                                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:6 }}>
+                                    <button
+                                      onMouseDown={async e => {
+                                        e.preventDefault();
+                                        if (!window.confirm("Delete this beat?")) return;
+                                        await supabase.from("beats").delete().eq("id", b.id);
+                                        setScenesWithBeats(prev => prev.map(s =>
+                                          s.scene.id === b.scene_id
+                                            ? { ...s, beats: s.beats.filter(x => x.id !== b.id) }
+                                            : s
+                                        ));
+                                        setEditingBeatId(null);
+                                      }}
+                                      style={{ background:"none", border:"1px solid #552222", color:"#cc6666", borderRadius:4, fontSize:11, fontFamily:"sans-serif", padding:"4px 12px", cursor:"pointer", marginTop:6 }}>
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
                               : <span
                                   onClick={() => {
                                     clearTimeout(beatClickRef.current);
@@ -638,22 +657,49 @@ function ProseViewer() {
                   }
                 </div>
               ))}
+              {phase==="ready" && (generating || (pendingProse && pendingProse.sceneId === selSc)) && (
+                <div style={{ marginTop:32, borderTop:"1px solid var(--border)", paddingTop:24 }}>
+                  {generating && !pendingProse
+                    ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13, fontStyle:"italic" }}>
+                        <span className="spin" /> Generating…
+                      </div>
+                    : <>
+                        <div style={{ fontSize:16, lineHeight:2.0, color:"#c8c0b0", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left", opacity:0.85 }}>
+                          {pendingProse.prose}
+                        </div>
+                        <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
+                          <button
+                            onClick={() => setPendingProse(null)}
+                            style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
+                            Discard
+                          </button>
+                          <button
+                            disabled={generating}
+                            onClick={generate}
+                            style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
+                            Regenerate
+                          </button>
+                          <button
+                            disabled={generating}
+                            onClick={acceptProse}
+                            style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
+                            Accept
+                          </button>
+                        </div>
+                      </>
+                  }
+                </div>
+              )}
             </div>
 
-            {phase==="ready" && (
-              <WritePanel
-                directive={directive}
-                setDirective={setDirective}
-                generate={generate}
-                generating={generating}
-                pendingProse={pendingProse}
-                setPendingProse={setPendingProse}
-                acceptProse={acceptProse}
-                selSc={selSc}
-                taRef={taRef}
-                directiveRef={directiveRef}
-              />
-            )}
+            <WritePanel
+              directive={directive}
+              setDirective={setDirective}
+              generate={generate}
+              generating={generating}
+              taRef={taRef}
+              directiveRef={directiveRef}
+            />
           </div>
         </div>
       </div>
