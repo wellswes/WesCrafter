@@ -642,10 +642,10 @@ function ProseViewer() {
         <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
 
           {/* LEFT PANEL */}
-          <div ref={leftPanelRef} style={{ width:220, flexShrink:0, background:"var(--bg2)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
+          <div ref={leftPanelRef} style={{ width:220, flexShrink:0, background:"var(--bg2)", borderRight:"1px solid var(--border)", display:"flex", flexDirection:"column", overflow:"hidden", position:"relative" }}>
 
             {showLoc ? (
-              <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
+              <div style={{ position:"absolute", top:0, left:0, width:"100%", height:"100%", zIndex:500, background:"var(--bg)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
                 {locStack.length > 0 && (
                   <div
                     onClick={() => setLocStack(p => p.slice(0, -1))}
