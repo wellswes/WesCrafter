@@ -602,7 +602,7 @@ function ProseViewer() {
       <div style={{ height:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* ── PORTRAIT BAND — full width ── */}
-        <div style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:"0 16px", overflowX:"auto", gap:10, backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
+        <div style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:0, margin:0, overflow:"hidden", backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
           {/* portraits */}
           {sceneChars.length === 0 ? (
             <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>
@@ -622,16 +622,15 @@ function ProseViewer() {
                   onTouchStart={() => { longPressTimer = setTimeout(togglePov, 500); }}
                   onTouchEnd={() => clearTimeout(longPressTimer)}
                   onTouchMove={() => clearTimeout(longPressTimer)}
-                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer", position:"relative" }}>
+                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer", position:"relative", margin:0, padding:0, alignSelf:"flex-end" }}>
                   {isUncertain && (
                     <div style={{ position:"absolute", top:6, right:6, width:10, height:10, borderRadius:"50%", background:"#e8a020", zIndex:2, boxShadow:"0 0 0 2px var(--bg2)", animation:"pulse-amber 1.6s ease-in-out infinite" }} />
                   )}
                   {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:215, objectFit:"cover", objectPosition:"top", borderBottom:`3px solid ${color}`, display:"block" }} />
-                    : <div style={{ width:"100%", height:215, background:color+"22", borderBottom:`3px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
+                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:215, objectFit:"cover", objectPosition:"top", display:"block" }} />
+                    : <div style={{ width:"100%", height:215, background:color+"22", display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
                   }
-                  <div style={{ height:3, background: isPov ? "var(--gold)" : "transparent", borderRadius:2, marginTop:2 }} />
-                  <div style={{ fontSize:10, fontFamily:"sans-serif", color, textAlign:"center", padding:"4px 4px 0", lineHeight:1.3 }}>{c.name}</div>
+                  {isPov && <div style={{ position:"absolute", bottom:0, left:0, right:0, height:3, background:"var(--gold)", borderRadius:2 }} />}
                 </div>
               );
             })
