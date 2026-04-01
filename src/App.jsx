@@ -129,6 +129,8 @@ function ProseViewer() {
   const [showChar,        setShowChar]        = useState(false);
   const [charDropPos,     setCharDropPos]     = useState(null);
   const [povCharacterId, setPovCharacterId] = useState(null);
+  const [charPositions,   setCharPositions]   = useState({}); // { [charId]: { x, y, z, scale } }
+  const [selectedCharId,  setSelectedCharId]  = useState(null);
   const [directive,      setDirective]      = useState("");
   const [generating,     setGenerating]     = useState(false);
   const [pendingProse,   setPendingProse]   = useState(null); // { prose, directive, sceneId, sceneState }
@@ -149,6 +151,7 @@ function ProseViewer() {
   const snapDebounceRef   = useRef(null);
   const observerRef       = useRef(null);
   const scrollContainerRef = useRef(null);
+  const bandRef                    = useRef(null);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -165,7 +168,7 @@ function ProseViewer() {
 
   const loadChapter = useCallback(async (ch, targetSceneId = null) => {
     setSelCh(ch.id); setSelSc(null);
-    setScenes([]); setScenesWithBeats([]); setPhase("loading");
+    setScenes([]); setScenesWithBeats([]); setCharPositions({}); setPhase("loading");
     try {
       const scs = await fetchScenes(ch.id);
       setScenes(scs);
@@ -232,10 +235,36 @@ function ProseViewer() {
     }
   }, [chapters, allScenesByChapter, selCh, loadChapter]);
 
-  const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) setSceneChars(p => [...p, c]); setShowChar(false); };
+  const saveSceneState = async (overrideCharIds) => {
+    if (!selCh) return;
+    await supabase.from("scene_state").upsert({
+      story_id:             STORY_ID,
+      current_chapter_id:   selCh,
+      current_scene_id:     selSc,
+      location_text:        location,
+      location_id:          locationId,
+      time_of_day:          timeOfDay,
+      scene_mode:           mode,
+      active_character_ids: overrideCharIds ?? sceneChars.map(c => c.id),
+      pov_character_id:     povCharacterId,
+      updated_at:           new Date().toISOString(),
+    }, { onConflict: "story_id" });
+  };
+
+  const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) { setSceneChars(p => [...p, c]); } setShowChar(false); };
   const removeChar = id => {
-    setSceneChars(p => p.filter(c => c.id !== id));
+    const updatedChars = sceneChars.filter(c => c.id !== id);
+    setSceneChars(updatedChars);
     setUncertainChars(p => { const n = { ...p }; delete n[id]; return n; });
+    if (activeBeatId) {
+      const updatedIds = updatedChars.map(c => c.id);
+      supabase.from("beats").update({ snap_active_character_ids: updatedIds }).eq("id", activeBeatId);
+      setScenesWithBeats(prev => prev.map(sw => ({
+        ...sw,
+        beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, snap_active_character_ids: updatedIds } : b),
+      })));
+    }
+    saveSceneState(updatedChars.map(c => c.id));
   };
   const available  = allChars.filter(c => !sceneChars.find(x => x.id === c.id));
 
@@ -454,6 +483,14 @@ function ProseViewer() {
   // Clear active beat when scene changes
   useEffect(() => { setActiveBeatId(null); }, [selSc]);
 
+  // Remove charPositions for characters no longer in scene
+  useEffect(() => {
+    setCharPositions(prev => {
+      const ids = new Set(sceneChars.map(c => c.id));
+      return Object.fromEntries(Object.entries(prev).filter(([k]) => ids.has(k)));
+    });
+  }, [sceneChars]);
+
   // Load snap state from a beat into the UI
   const loadBeatSnap = (beat) => {
     const hasSnap = beat.snap_location_id || beat.snap_time_of_day ||
@@ -514,13 +551,12 @@ function ProseViewer() {
   }, [scenesWithBeats, allChars, allLocs]);
 
   // Write-back snap columns whenever UI state changes while a beat is active.
-  // Skip the first effect firing when activeBeatId itself changes (that's the snap load).
+  // Skip only when activeBeatId itself just changed (snap load). State edits on same beat always save.
   useEffect(() => {
     if (!activeBeatId) return;
-    if (activeBeatId !== prevActiveBeatIdRef.current) {
-      prevActiveBeatIdRef.current = activeBeatId;
-      return;
-    }
+    const beatJustChanged = activeBeatId !== prevActiveBeatIdRef.current;
+    prevActiveBeatIdRef.current = activeBeatId;
+    if (beatJustChanged) return;
     supabase.from("beats").update({
       snap_location_id:          locationId,
       snap_time_of_day:          timeOfDay,
@@ -602,19 +638,22 @@ function ProseViewer() {
       <div style={{ height:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* ── PORTRAIT BAND — full width ── */}
-        <div style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", alignItems:"flex-end", justifyContent:"center", padding:0, margin:0, overflow:"hidden", backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
+        <div ref={bandRef} style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", position:"relative", padding:0, margin:0, overflow:"hidden", backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
           {/* portraits */}
           {sceneChars.length === 0 ? (
             <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>
               No characters in scene
             </div>
           ) : (
-            sceneChars.map(c => {
+            sceneChars.map((c, idx) => {
               const color = c.link_color || "#7a6e62";
               const isPov = c.id === povCharacterId;
               const isUncertain = !!uncertainChars[c.id];
               let longPressTimer = null;
               const togglePov = () => setPovCharacterId(prev => prev === c.id ? null : c.id);
+              const total = sceneChars.length;
+              const defaultX = (idx / Math.max(total, 1)) * 80 + 10;
+              const pos = charPositions[c.id] ?? { x: defaultX, y: 0, z: idx, scale: 1.0 };
               return (
                 <div key={c.id} title={`${c.name}${isUncertain ? " · may have left" : ""} · right-click to set POV · double-click to remove`}
                   onDoubleClick={() => removeChar(c.id)}
@@ -622,7 +661,33 @@ function ProseViewer() {
                   onTouchStart={() => { longPressTimer = setTimeout(togglePov, 500); }}
                   onTouchEnd={() => clearTimeout(longPressTimer)}
                   onTouchMove={() => clearTimeout(longPressTimer)}
-                  style={{ flexShrink:1, flexBasis:160, minWidth:80, display:"flex", flexDirection:"column", cursor:"pointer", position:"relative", margin:0, padding:0, alignSelf:"flex-end" }}>
+                  onMouseDown={e => {
+                    if (e.button !== 0) return;
+                    e.preventDefault();
+                    const startX = e.clientX;
+                    const startY = e.clientY;
+                    const startPos = charPositions[c.id] ?? { x: defaultX, y: 0, z: idx, scale: 1.0 };
+                    let moved = false;
+                    const band = bandRef.current;
+                    const rect = band.getBoundingClientRect();
+                    const onMove = me => {
+                      const dx = ((me.clientX - startX) / rect.width) * 100;
+                      const dy = ((startY - me.clientY) / rect.height) * 100;
+                      if (Math.abs(me.clientX - startX) > 5 || Math.abs(me.clientY - startY) > 5) moved = true;
+                      setCharPositions(prev => ({
+                        ...prev,
+                        [c.id]: { ...startPos, x: Math.max(0, Math.min(95, startPos.x + dx)), y: Math.max(0, Math.min(80, startPos.y + dy)) }
+                      }));
+                    };
+                    const onUp = () => {
+                      if (!moved) setSelectedCharId(c.id);
+                      document.removeEventListener('mousemove', onMove);
+                      document.removeEventListener('mouseup', onUp);
+                    };
+                    document.addEventListener('mousemove', onMove);
+                    document.addEventListener('mouseup', onUp);
+                  }}
+                  style={{ position:"absolute", left:`${pos.x}%`, bottom:`${pos.y}%`, zIndex: pos.z, transform:`scale(${pos.scale * (c.height_scale ?? 1.0)})`, transformOrigin:"bottom center", width:160, display:"flex", flexDirection:"column", cursor:"grab", margin:0, padding:0 }}>
                   {isUncertain && (
                     <div style={{ position:"absolute", top:6, right:6, width:10, height:10, borderRadius:"50%", background:"#e8a020", zIndex:2, boxShadow:"0 0 0 2px var(--bg2)", animation:"pulse-amber 1.6s ease-in-out infinite" }} />
                   )}
@@ -815,8 +880,6 @@ function ProseViewer() {
                                     clearTimeout(beatClickRef.current);
                                     beatClickRef.current = setTimeout(() => {
                                       setActiveBeatId(b.id);
-                                      const snapChars = allChars?.filter(c => b.snap_active_character_ids?.includes(c.id));
-                                      if (snapChars && snapChars.length > 0) setSceneChars(snapChars);
                                       if (b.snap_scene_mode) setMode(b.snap_scene_mode);
                                       if (b.snap_time_of_day) setTimeOfDay(b.snap_time_of_day);
                                       const snapPlace = allLocs?.find(l => l.id === b.snap_location_id);
