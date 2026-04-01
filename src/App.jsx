@@ -1,108 +1,11 @@
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Routes, Route, Link } from "react-router-dom";
-import { createClient } from "@supabase/supabase-js";
 import Codex from "./Codex.jsx";
 import Places from "./Places.jsx";
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
-
-const STORY_ID = "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3";
-const TIMES = ["Dawn","Morning","Noon","Afternoon","Evening","Night","Midnight"];
-const MODES = [
-  { key:"narrative", label:"Narrative", color:"#7a6e62" },
-  { key:"intimate",  label:"Intimate",  color:"#D4537E" },
-  { key:"combat",    label:"Combat",    color:"#cc2200" },
-];
-
-// ── CSS ───────────────────────────────────────────────────────────────────────
-const CSS = `
-  :root {
-    --bg:#0f0d0b; --bg2:#1a1612; --bg3:#16130f; --bg4:#25201a;
-    --border:#2e2820; --border2:#3a3028;
-    --gold:#c9a86c; --gold2:#a8884c;
-    --text:#ffffff; --text2:#ffffff; --text3:#cccccc; --text4:#aaaaaa;
-  }
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body, #root { height: 100%; }
-  body { background: var(--bg); font-family: Georgia, serif; color: var(--text); text-align: left; }
-  select { appearance: none; }
-  select:focus, button:focus, textarea:focus { outline: 2px solid var(--gold2); outline-offset: 1px; }
-  ::-webkit-scrollbar { width: 5px; }
-  ::-webkit-scrollbar-track { background: var(--bg2); }
-  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  @keyframes pulse-amber { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-  .spin { display:inline-block; width:11px; height:11px; border:2px solid rgba(201,168,108,0.25); border-top-color:#c9a86c; border-radius:50%; animation:spin 0.7s linear infinite; vertical-align:middle; }
-  select optgroup { color:#c9a86c; font-size:10px; font-family:sans-serif; letter-spacing:0.08em; font-style:normal; }
-  select option { color:#ffffff; font-family:sans-serif; font-size:12px; }
-`;
-
-// ── Supabase queries ──────────────────────────────────────────────────────────
-const fetchChapters = async () => {
-  const { data } = await supabase
-    .from("chapters").select("id, sequence_number, title")
-    .eq("story_id", STORY_ID).order("sequence_number", { ascending: true });
-  return data || [];
-};
-const fetchScenes = async (chapterId) => {
-  const { data } = await supabase
-    .from("scenes").select("id, sequence_number, title, mood")
-    .eq("chapter_id", chapterId).order("sequence_number", { ascending: true });
-  return data || [];
-};
-const fetchBeats = async (sceneId) => {
-  const { data } = await supabase
-    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id")
-    .eq("scene_id", sceneId).order("sequence_number", { ascending: true });
-  return data || [];
-};
-const fetchCharacters = async () => {
-  const { data } = await supabase
-    .from("characters").select("id, name, portrait_url, character_group, character_groups(link_color)").order("name");
-  return (data || []).map(c => ({ ...c, link_color: c.character_groups?.link_color || "#7a6e62" }));
-};
-const fetchGroups = async () => {
-  const { data } = await supabase
-    .from("character_groups").select("id, name, sort_order").order("sort_order");
-  return data || [];
-};
-const WORLD_ID = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
-const fetchPlaces = async () => {
-  const { data } = await supabase.from("places").select("id, name, place_type, parent_id").eq("world_id", WORLD_ID).order("name");
-  return data || [];
-};
-
-// ── Shared style atoms ────────────────────────────────────────────────────────
-const selFull = {
-  width:"100%", background:"var(--bg4)", color:"var(--text)",
-  border:"1px solid var(--border2)", borderRadius:4,
-  padding:"5px 24px 5px 8px", fontSize:12, fontFamily:"sans-serif", cursor:"pointer",
-  backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%237a6e62'/%3E%3C/svg%3E")`,
-  backgroundRepeat:"no-repeat", backgroundPosition:"right 7px center",
-};
-const panelLbl = {
-  fontSize:10, color:"var(--text4)", fontFamily:"sans-serif",
-  letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5, display:"block",
-};
-const fullBtn = {
-  width:"100%", textAlign:"left", background:"var(--bg4)", color:"var(--text)",
-  border:"1px solid var(--border2)", borderRadius:4, padding:"5px 8px",
-  fontSize:12, fontFamily:"sans-serif", cursor:"pointer", display:"flex",
-  alignItems:"center", justifyContent:"space-between", gap:4,
-};
-const dropBase = {
-  position:"absolute", top:"calc(100% + 3px)", left:0, right:0, zIndex:50,
-  background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6,
-  boxShadow:"0 4px 20px #00000070", overflow:"hidden",
-};
-const dropItem = {
-  padding:"7px 10px", fontSize:12, cursor:"pointer",
-  color:"var(--text)", fontFamily:"sans-serif",
-};
+import PortraitBand from "./PortraitBand.jsx";
+import WritePanel from "./WritePanel.jsx";
+import { supabase, STORY_ID, WORLD_ID, TIMES, MODES, CSS, selFull, panelLbl, fullBtn, dropBase, dropItem, fetchChapters, fetchScenes, fetchBeats, fetchCharacters, fetchGroups, fetchPlaces } from "./constants.js";
 
 // ── ProseViewer ───────────────────────────────────────────────────────────────
 function ProseViewer() {
@@ -638,69 +541,18 @@ function ProseViewer() {
       <div style={{ height:"100vh", background:"var(--bg)", color:"var(--text)", display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
         {/* ── PORTRAIT BAND — full width ── */}
-        <div ref={bandRef} style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", position:"relative", padding:0, margin:0, overflow:"hidden", backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
-          {/* portraits */}
-          {sceneChars.length === 0 ? (
-            <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>
-              No characters in scene
-            </div>
-          ) : (
-            sceneChars.map((c, idx) => {
-              const color = c.link_color || "#7a6e62";
-              const isPov = c.id === povCharacterId;
-              const isUncertain = !!uncertainChars[c.id];
-              let longPressTimer = null;
-              const togglePov = () => setPovCharacterId(prev => prev === c.id ? null : c.id);
-              const total = sceneChars.length;
-              const defaultX = (idx / Math.max(total, 1)) * 80 + 10;
-              const pos = charPositions[c.id] ?? { x: defaultX, y: 0, z: idx, scale: 1.0 };
-              return (
-                <div key={c.id} title={`${c.name}${isUncertain ? " · may have left" : ""} · right-click to set POV · double-click to remove`}
-                  onDoubleClick={() => removeChar(c.id)}
-                  onContextMenu={e => { e.preventDefault(); togglePov(); }}
-                  onTouchStart={() => { longPressTimer = setTimeout(togglePov, 500); }}
-                  onTouchEnd={() => clearTimeout(longPressTimer)}
-                  onTouchMove={() => clearTimeout(longPressTimer)}
-                  onMouseDown={e => {
-                    if (e.button !== 0) return;
-                    e.preventDefault();
-                    const startX = e.clientX;
-                    const startY = e.clientY;
-                    const startPos = charPositions[c.id] ?? { x: defaultX, y: 0, z: idx, scale: 1.0 };
-                    let moved = false;
-                    const band = bandRef.current;
-                    const rect = band.getBoundingClientRect();
-                    const onMove = me => {
-                      const dx = ((me.clientX - startX) / rect.width) * 100;
-                      const dy = ((startY - me.clientY) / rect.height) * 100;
-                      if (Math.abs(me.clientX - startX) > 5 || Math.abs(me.clientY - startY) > 5) moved = true;
-                      setCharPositions(prev => ({
-                        ...prev,
-                        [c.id]: { ...startPos, x: Math.max(0, Math.min(95, startPos.x + dx)), y: Math.max(0, Math.min(80, startPos.y + dy)) }
-                      }));
-                    };
-                    const onUp = () => {
-                      if (!moved) setSelectedCharId(c.id);
-                      document.removeEventListener('mousemove', onMove);
-                      document.removeEventListener('mouseup', onUp);
-                    };
-                    document.addEventListener('mousemove', onMove);
-                    document.addEventListener('mouseup', onUp);
-                  }}
-                  style={{ position:"absolute", left:`${pos.x}%`, bottom:`${pos.y}%`, zIndex: pos.z, transform:`scale(${pos.scale * (c.height_scale ?? 1.0)})`, transformOrigin:"bottom center", width:160, display:"flex", flexDirection:"column", cursor:"grab", margin:0, padding:0 }}>
-                  {isUncertain && (
-                    <div style={{ position:"absolute", top:6, right:6, width:10, height:10, borderRadius:"50%", background:"#e8a020", zIndex:2, boxShadow:"0 0 0 2px var(--bg2)", animation:"pulse-amber 1.6s ease-in-out infinite" }} />
-                  )}
-                  {c.portrait_url
-                    ? <img src={c.portrait_url} alt={c.name} style={{ width:"100%", height:215, objectFit:"cover", objectPosition:"top", display:"block" }} />
-                    : <div style={{ width:"100%", height:215, background:color+"22", display:"flex", alignItems:"center", justifyContent:"center", fontSize:44, color, fontFamily:"sans-serif", fontWeight:"bold" }}>{c.name[0]}</div>
-                  }
-                  {isPov && <div style={{ position:"absolute", bottom:0, left:0, right:0, height:3, background:"var(--gold)", borderRadius:2 }} />}
-                </div>
-              );
-            })
-          )}
-        </div>
+        <PortraitBand
+          sceneChars={sceneChars}
+          charPositions={charPositions}
+          setCharPositions={setCharPositions}
+          selectedCharId={selectedCharId}
+          setSelectedCharId={setSelectedCharId}
+          povCharacterId={povCharacterId}
+          setPovCharacterId={setPovCharacterId}
+          uncertainChars={uncertainChars}
+          removeChar={removeChar}
+          bandRef={bandRef}
+        />
 
         {/* ── BOTTOM ROW ── */}
         <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
@@ -904,57 +756,22 @@ function ProseViewer() {
                   }
                 </div>
               ))}
-              {/* PENDING / GENERATING BLOCK */}
-              {phase==="ready" && (generating || (pendingProse && pendingProse.sceneId === selSc)) && (
-                <div style={{ marginTop:32, borderTop:"1px solid var(--border)", paddingTop:24 }}>
-                  {generating && !pendingProse
-                    ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13, fontStyle:"italic" }}>
-                        <span className="spin" /> Generating…
-                      </div>
-                    : <>
-                        <div style={{ fontSize:16, lineHeight:2.0, color:"#c8c0b0", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left", opacity:0.85 }}>
-                          {pendingProse.prose}
-                        </div>
-                        <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
-                          <button
-                            onClick={() => setPendingProse(null)}
-                            style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
-                            Discard
-                          </button>
-                          <button
-                            disabled={generating}
-                            onClick={generate}
-                            style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
-                            Regenerate
-                          </button>
-                          <button
-                            disabled={generating}
-                            onClick={acceptProse}
-                            style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
-                            Accept
-                          </button>
-                        </div>
-                      </>
-                  }
-                </div>
-              )}
             </div>
 
-            {/* INPUT BAR */}
-            <div style={{ flexShrink:0, background:"var(--bg3)", borderTop:"1px solid var(--border)", padding:"10px 16px", display:"flex", gap:10, alignItems:"flex-end" }}>
-              <textarea ref={el => { taRef.current = el; directiveRef.current = el; }} placeholder="Write a directive…" rows={1}
-                value={directive}
-                onChange={e => setDirective(e.target.value)}
-                onInput={e => { e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight, 120)+"px"; }}
-                onKeyDown={e => { if (e.key==="Enter" && (e.metaKey||e.ctrlKey)) generate(); }}
-                style={{ flex:1, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:13, fontFamily:"sans-serif", lineHeight:1.6, padding:"6px 10px", resize:"none", outline:"none", minHeight:34, maxHeight:120, overflow:"auto" }} />
-              <button
-                onClick={generate}
-                disabled={!directive.trim() || generating}
-                style={{ flexShrink:0, background: directive.trim() && !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${directive.trim() && !generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: directive.trim() && !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: directive.trim() && !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-                {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
-              </button>
-            </div>
+            {phase==="ready" && (
+              <WritePanel
+                directive={directive}
+                setDirective={setDirective}
+                generate={generate}
+                generating={generating}
+                pendingProse={pendingProse}
+                setPendingProse={setPendingProse}
+                acceptProse={acceptProse}
+                selSc={selSc}
+                taRef={taRef}
+                directiveRef={directiveRef}
+              />
+            )}
           </div>
         </div>
       </div>
