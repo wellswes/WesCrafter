@@ -223,17 +223,19 @@ function ProseViewer() {
         body: JSON.stringify({
           directive,
           proseContext,
-          characters:     sceneCharsWithData,
+          characters:        sceneCharsWithData,
           location,
           timeOfDay,
-          sceneMode:      mode,
-          chapterSummary: chData?.context_summary || "",
-          promptModifier: pmData?.value || "",
+          sceneMode:         mode,
+          chapterSummary:    chData?.context_summary || "",
+          promptModifier:    pmData?.value || "",
+          povCharacterName:  allChars.find(c => c.id === povCharacterId)?.name || "Zep",
         }),
       });
       const result = await response.json();
       if (result.error) throw new Error(result.error);
       setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, sceneState: result.scene_state || null });
+      setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" }), 80);
     } catch (e) {
       alert("Generation failed: " + e.message);
     } finally {
@@ -273,17 +275,30 @@ if (!pendingProse) return;
     if (sceneState) {
       // Location
       if (sceneState.location) {
-        const { data: matched } = await supabase
-          .from("places")
-          .select("id, name")
-          .ilike("name", sceneState.location)
-          .limit(1)
-          .single();
-        if (matched) {
-          snapLocationId = matched.id;
-          snapLocation   = matched.name;
-          setLocation(matched.name);
-          setLocationId(matched.id);
+        if (sceneState.location === "[parent]") {
+          const currentPlace = allLocs.find(l => l.id === snapLocationId);
+          if (currentPlace?.parent_id) {
+            const parentPlace = allLocs.find(l => l.id === currentPlace.parent_id);
+            if (parentPlace) {
+              snapLocationId = parentPlace.id;
+              snapLocation   = parentPlace.name;
+              setLocation(parentPlace.name);
+              setLocationId(parentPlace.id);
+            }
+          }
+        } else {
+          const { data: matched } = await supabase
+            .from("places")
+            .select("id, name")
+            .ilike("name", sceneState.location)
+            .limit(1)
+            .single();
+          if (matched) {
+            snapLocationId = matched.id;
+            snapLocation   = matched.name;
+            setLocation(matched.name);
+            setLocationId(matched.id);
+          }
         }
       }
       // Time of day
@@ -306,6 +321,35 @@ if (!pendingProse) return;
           setSceneChars(snapChars);
         }
       }
+      // POV character exit = location change, not a real exit
+      // If Zep (pov character) appears in exited list, walk location up
+      // one level in the hierarchy instead of removing him
+      const povChar = allChars.find(c => c.id === povCharacterId);
+      if (povChar && sceneState.characters?.exited?.length) {
+        const povExited = sceneState.characters.exited.find(
+          x => x.name.toLowerCase() === povChar.name.toLowerCase()
+        );
+        if (povExited) {
+          // Remove Zep from the exited list so he isn't processed below
+          sceneState.characters.exited = sceneState.characters.exited.filter(
+            x => x.name.toLowerCase() !== povChar.name.toLowerCase()
+          );
+          // Walk location up one level if no new location was specified
+          if (!sceneState.location && snapLocationId) {
+            const currentPlace = allLocs.find(l => l.id === snapLocationId);
+            if (currentPlace?.parent_id) {
+              const parentPlace = allLocs.find(l => l.id === currentPlace.parent_id);
+              if (parentPlace) {
+                snapLocationId = parentPlace.id;
+                snapLocation   = parentPlace.name;
+                setLocation(parentPlace.name);
+                setLocationId(parentPlace.id);
+              }
+            }
+          }
+        }
+      }
+
       // Characters exited
       if (sceneState.characters?.exited?.length) {
         const clearExits  = sceneState.characters.exited.filter(x => x.confidence === "clear").map(x => x.name.toLowerCase());
@@ -600,35 +644,7 @@ if (!pendingProse) return;
                     : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
                         {beats.filter(b => b.prose_text).map((b, i) => (
                           <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingLeft: 10, paddingBottom: "1.2rem", marginBottom: "1.2rem", transition:"border-color 0.15s" }}>
-                            {editingBeatId === b.id
-                              ? <div>
-                                  <textarea
-                                    value={editingText}
-                                    onChange={e => setEditingText(e.target.value)}
-                                    onBlur={() => saveBeatProse(b.id, editingText)}
-                                    onKeyDown={e => { if (e.key === "Escape") setEditingBeatId(null); }}
-                                    autoFocus
-                                    style={{ width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"8px 12px", resize:"vertical", minHeight:120, whiteSpace:"pre-wrap", boxSizing:"border-box" }}
-                                  />
-                                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:6 }}>
-                                    <button
-                                      onMouseDown={async e => {
-                                        e.preventDefault();
-                                        if (!window.confirm("Delete this beat?")) return;
-                                        await supabase.from("beats").delete().eq("id", b.id);
-                                        setScenesWithBeats(prev => prev.map(s =>
-                                          s.scene.id === b.scene_id
-                                            ? { ...s, beats: s.beats.filter(x => x.id !== b.id) }
-                                            : s
-                                        ));
-                                        setEditingBeatId(null);
-                                      }}
-                                      style={{ background:"none", border:"1px solid #552222", color:"#cc6666", borderRadius:4, fontSize:11, fontFamily:"sans-serif", padding:"4px 12px", cursor:"pointer", marginTop:6 }}>
-                                      Delete
-                                    </button>
-                                  </div>
-                                </div>
-                              : <span
+                            {<span
                                   onClick={() => {
                                     clearTimeout(beatClickRef.current);
                                     beatClickRef.current = setTimeout(() => {
@@ -664,9 +680,12 @@ if (!pendingProse) return;
                         <span className="spin" /> Generating…
                       </div>
                     : <>
-                        <div style={{ fontSize:16, lineHeight:2.0, color:"#c8c0b0", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left", opacity:0.85 }}>
-                          {pendingProse.prose}
-                        </div>
+                        <textarea
+                          value={pendingProse.prose}
+                          onChange={e => setPendingProse(p => ({ ...p, prose: e.target.value }))}
+                          style={{ width:"100%", background:"var(--bg3)", color:"#c8c0b0", border:"1px solid var(--border2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"12px 16px", resize:"none", outline:"none", boxSizing:"border-box", minHeight:200 }}
+                          rows={Math.max(6, (pendingProse.prose.match(/\n/g)||[]).length + 3)}
+                        />
                         <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
                           <button
                             onClick={() => setPendingProse(null)}
@@ -704,6 +723,43 @@ if (!pendingProse) return;
         </div>
       </div>
       {charDropdown}
+      {editingBeatId && createPortal(
+        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.85)", display:"flex", flexDirection:"column", padding:"40px 60px" }}>
+          <textarea
+            value={editingText}
+            onChange={e => setEditingText(e.target.value)}
+            autoFocus
+            style={{ flex:1, width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:6, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"24px 32px", resize:"none", outline:"none" }}
+          />
+          <div style={{ display:"flex", gap:12, marginTop:16, justifyContent:"flex-end" }}>
+            <button
+              onClick={() => {
+                if (!window.confirm("Delete this beat?")) return;
+                const beatId = editingBeatId;
+                supabase.from("beats").delete().eq("id", beatId).then(() => {
+                  setScenesWithBeats(prev => prev.map(s => ({
+                    ...s, beats: s.beats.filter(x => x.id !== beatId),
+                  })));
+                  setEditingBeatId(null);
+                });
+              }}
+              style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
+              Delete
+            </button>
+            <button
+              onClick={() => setEditingBeatId(null)}
+              style={{ background:"none", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
+              Cancel
+            </button>
+            <button
+              onClick={() => saveBeatProse(editingBeatId, editingText)}
+              style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor:"pointer", fontWeight:"bold" }}>
+              Save
+            </button>
+          </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }
