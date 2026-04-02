@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Routes, Route } from "react-router-dom";
 import Codex from "./Codex.jsx";
 import Places from "./Places.jsx";
+import SnapDebug from "./SnapDebug.jsx";
 import PortraitBand from "./PortraitBand.jsx";
 import WritePanel from "./WritePanel.jsx";
 import LeftPanel from "./LeftPanel.jsx";
@@ -156,19 +157,24 @@ function ProseViewer() {
   };
 
   const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) { setSceneChars(p => [...p, c]); } setShowChar(false); };
-  const removeChar = id => {
+  const removeChar = async id => {
     const updatedChars = sceneChars.filter(c => c.id !== id);
     setSceneChars(updatedChars);
     setUncertainChars(p => { const n = { ...p }; delete n[id]; return n; });
-    if (activeBeatId) {
+    saveSceneState(updatedChars.map(c => c.id));
+    const targetBeatId = activeBeatId;
+    if (targetBeatId) {
       const updatedIds = updatedChars.map(c => c.id);
-      supabase.from("beats").update({ snap_active_character_ids: updatedIds }).eq("id", activeBeatId);
+      await supabase.from("beats").update({
+        snap_active_character_ids: updatedIds
+      }).eq("id", targetBeatId);
       setScenesWithBeats(prev => prev.map(sw => ({
         ...sw,
-        beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, snap_active_character_ids: updatedIds } : b),
+        beats: sw.beats.map(b => b.id === targetBeatId
+          ? { ...b, snap_active_character_ids: updatedIds }
+          : b)
       })));
     }
-    saveSceneState(updatedChars.map(c => c.id));
   };
   const available  = allChars.filter(c => !sceneChars.find(x => x.id === c.id));
 
@@ -441,45 +447,6 @@ if (!pendingProse) return;
     setPovCharacterId(beat.snap_pov_character_id ?? null);
   };
 
-  // Scroll-driven snap: on scroll, find the beat closest to center and apply its snap
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const beats = scenesWithBeats.flatMap(s => s.beats);
-    if (!beats.length) return;
-
-    let timer = null;
-    const handleScroll = () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        const containerRect = container.getBoundingClientRect();
-        const centerY = containerRect.top + containerRect.height / 2;
-        let closest = null;
-        let closestDist = Infinity;
-        beats.forEach(b => {
-          const el = beatRefs.current[b.id];
-          if (!el) return;
-          const rect = el.getBoundingClientRect();
-          const dist = Math.abs((rect.top + rect.height / 2) - centerY);
-          if (dist < closestDist) { closestDist = dist; closest = b; }
-        });
-        if (!closest) return;
-        if (closest.snap_active_character_ids?.length) {
-          const snapChars = allChars.filter(c => closest.snap_active_character_ids.includes(c.id));
-          setSceneChars(snapChars);
-        }
-        if (closest.snap_scene_mode) setMode(closest.snap_scene_mode);
-        if (closest.snap_time_of_day) setTimeOfDay(closest.snap_time_of_day);
-        if (closest.snap_location_id) {
-          const snapPlace = allLocs.find(l => l.id === closest.snap_location_id);
-          if (snapPlace) { setLocationId(snapPlace.id); setLocation(snapPlace.name); }
-        }
-      }, 300);
-    };
-
-    container.addEventListener('scroll', handleScroll);
-    return () => { container.removeEventListener('scroll', handleScroll); clearTimeout(timer); };
-  }, [scenesWithBeats, allChars, allLocs]);
 
   // Write-back snap columns whenever UI state changes while a beat is active.
   // Skip only when activeBeatId itself just changed (snap load). State edits on same beat always save.
@@ -646,15 +613,8 @@ if (!pendingProse) return;
                           <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingLeft: 10, paddingBottom: "1.2rem", marginBottom: "1.2rem", transition:"border-color 0.15s" }}>
                             {<span
                                   onClick={() => {
-                                    clearTimeout(beatClickRef.current);
-                                    beatClickRef.current = setTimeout(() => {
-                                      setActiveBeatId(b.id);
-                                      if (b.snap_scene_mode) setMode(b.snap_scene_mode);
-                                      if (b.snap_time_of_day) setTimeOfDay(b.snap_time_of_day);
-                                      const snapPlace = allLocs?.find(l => l.id === b.snap_location_id);
-                                      if (snapPlace) { setLocationId(snapPlace.id); setLocation(snapPlace.name); }
-                                      if (b.snap_pov_character_id) setPovCharacterId(b.snap_pov_character_id);
-                                    }, 220);
+                                    setActiveBeatId(b.id);
+                                    loadBeatSnap(b);
                                   }}
                                   onDoubleClick={() => {
                                     clearTimeout(beatClickRef.current);
@@ -662,7 +622,7 @@ if (!pendingProse) return;
                                     setEditingText(b.prose_text);
                                   }}
                                   style={{ cursor:"text", display:"block" }}
-                                  title="Click to load snap · Double-click to edit"
+                                  title="Double-click to edit"
                                 >
                                   {b.prose_text}
                                 </span>
@@ -770,6 +730,7 @@ export default function App() {
       <Route path="/" element={<ProseViewer />} />
       <Route path="/codex" element={<Codex />} />
       <Route path="/places" element={<Places />} />
+      <Route path="/debug" element={<SnapDebug />} />
     </Routes>
   );
 }
