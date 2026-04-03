@@ -7,6 +7,7 @@ import SnapDebug from "./SnapDebug.jsx";
 import PortraitBand from "./PortraitBand.jsx";
 import WritePanel from "./WritePanel.jsx";
 import LeftPanel from "./LeftPanel.jsx";
+import StoryMap from "./StoryMap.jsx";
 import { supabase, STORY_ID, WORLD_ID, TIMES, MODES, CSS, selFull, panelLbl, fullBtn, dropBase, dropItem, fetchChapters, fetchScenes, fetchBeats, fetchCharacters, fetchGroups, fetchPlaces } from "./constants.js";
 
 // ── ProseViewer ───────────────────────────────────────────────────────────────
@@ -14,7 +15,6 @@ function ProseViewer() {
   const [chapters,           setChapters]           = useState([]);
   const [scenes,             setScenes]             = useState([]);
   const [scenesWithBeats,    setScenesWithBeats]    = useState([]);
-  const [allScenesByChapter, setAllScenesByChapter] = useState({});
   const [selCh,           setSelCh]           = useState(null);
   const [selSc,           setSelSc]           = useState(null);
   const [phase,           setPhase]           = useState("loading");
@@ -101,12 +101,6 @@ function ProseViewer() {
         if (!chs.length) { setPhase("ready"); return; }
         setChapters(chs);
 
-        // Preload scene lists for all chapters (no beats — just metadata for the combined nav select)
-        const allScenesArrays = await Promise.all(chs.map(ch => fetchScenes(ch.id)));
-        const sceneMap = {};
-        chs.forEach((ch, i) => { sceneMap[ch.id] = allScenesArrays[i]; });
-        setAllScenesByChapter(sceneMap);
-
         if (state) {
           if (state.location_text) setLocation(state.location_text);
           if (state.location_id)   setLocationId(state.location_id);
@@ -126,19 +120,6 @@ function ProseViewer() {
     })();
   }, [loadChapter]);
 
-  const onCombinedSelect = useCallback(async e => {
-    const sceneId = e.target.value;
-    if (!sceneId) return;
-    const ch = chapters.find(c => (allScenesByChapter[c.id] || []).some(s => s.id === sceneId));
-    if (!ch) return;
-    if (ch.id !== selCh) {
-      await loadChapter(ch, sceneId);
-      setTimeout(() => document.getElementById(sceneId)?.scrollIntoView({ behavior:"smooth" }), 100);
-    } else {
-      setSelSc(sceneId);
-      document.getElementById(sceneId)?.scrollIntoView({ behavior:"smooth" });
-    }
-  }, [chapters, allScenesByChapter, selCh, loadChapter]);
 
   const saveSceneState = async (overrideCharIds) => {
     if (!selCh) return;
@@ -438,6 +419,7 @@ if (!pendingProse) return;
       const chars = beat.snap_active_character_ids.map(id => allChars.find(c => c.id === id)).filter(Boolean);
       setSceneChars(chars);
     }
+    if (beat.snap_char_positions) setCharPositions(beat.snap_char_positions);
     if (beat.snap_location_id) {
       const loc = allLocs.find(l => l.id === beat.snap_location_id);
       if (loc) { setLocation(loc.name); setLocationId(loc.id); }
@@ -455,14 +437,20 @@ if (!pendingProse) return;
     const beatJustChanged = activeBeatId !== prevActiveBeatIdRef.current;
     prevActiveBeatIdRef.current = activeBeatId;
     if (beatJustChanged) return;
-    supabase.from("beats").update({
+    const snapUpdate = {
       snap_location_id:          locationId,
       snap_time_of_day:          timeOfDay,
       snap_scene_mode:           mode,
       snap_active_character_ids: sceneChars.map(c => c.id),
       snap_pov_character_id:     povCharacterId,
-    }).eq("id", activeBeatId);
-  }, [activeBeatId, sceneChars, locationId, timeOfDay, mode, povCharacterId]);
+      snap_char_positions:       charPositions,
+    };
+    supabase.from("beats").update(snapUpdate).eq("id", activeBeatId);
+    setScenesWithBeats(prev => prev.map(sw => ({
+      ...sw,
+      beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, ...snapUpdate } : b),
+    })));
+  }, [activeBeatId, sceneChars, locationId, timeOfDay, mode, povCharacterId, charPositions]);
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
   const visibleLocs = allLocs
@@ -572,9 +560,8 @@ if (!pendingProse) return;
             timeOfDay={timeOfDay}
             setTimeOfDay={setTimeOfDay}
             chapters={chapters}
-            allScenesByChapter={allScenesByChapter}
+            selCh={selCh}
             selSc={selSc}
-            onCombinedSelect={onCombinedSelect}
             phase={phase}
             charRef={charRef}
             openCharDrop={openCharDrop}
@@ -609,8 +596,24 @@ if (!pendingProse) return;
                   {beats.length === 0
                     ? <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>No beats for this scene yet.</div>
                     : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
-                        {beats.filter(b => b.prose_text).map((b, i) => (
-                          <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingLeft: 10, paddingBottom: "1.2rem", marginBottom: "1.2rem", transition:"border-color 0.15s" }}>
+                        {beats.filter(b => b.prose_text).map((b, i, arr) => {
+                          const prev = arr[i - 1];
+                          const stateChanged = i > 0 && prev && (
+                            JSON.stringify(b.snap_active_character_ids?.slice().sort()) !==
+                            JSON.stringify(prev.snap_active_character_ids?.slice().sort()) ||
+                            b.snap_location_id !== prev.snap_location_id ||
+                            b.snap_time_of_day !== prev.snap_time_of_day ||
+                            b.snap_scene_mode !== prev.snap_scene_mode
+                          );
+                          return (
+                          <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.12)", paddingLeft: 10, paddingBottom: "2rem", marginBottom: "2rem", transition:"border-color 0.15s" }}>
+                            {stateChanged && (
+                              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                                <div style={{ height:1, flex:1, background:"rgba(201,168,108,0.25)" }}/>
+                                <span style={{ fontSize:10, color:"var(--gold2)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", opacity:0.7, flexShrink:0 }}>scene shift</span>
+                                <div style={{ height:1, flex:1, background:"rgba(201,168,108,0.25)" }}/>
+                              </div>
+                            )}
                             {<span
                                   onClick={() => {
                                     setActiveBeatId(b.id);
@@ -628,7 +631,8 @@ if (!pendingProse) return;
                                 </span>
                             }
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                   }
                 </div>
@@ -731,6 +735,7 @@ export default function App() {
       <Route path="/codex" element={<Codex />} />
       <Route path="/places" element={<Places />} />
       <Route path="/debug" element={<SnapDebug />} />
+      <Route path="/map" element={<StoryMap />} />
     </Routes>
   );
 }
