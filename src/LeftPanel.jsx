@@ -4,8 +4,8 @@ import { TIMES, MODES, selFull, fullBtn, fetchScenes } from "./constants.js";
 export default function LeftPanel({
   leftPanelRef, showLoc, setShowLoc, locStack, setLocStack, visibleLocs, allLocs,
   location, setLocation, locationId, setLocationId, showMode, setShowMode,
-  mode, setMode, timeOfDay, setTimeOfDay, chapters, allScenesByChapter, selSc,
-  onCombinedSelect, phase, charRef, openCharDrop, loadChapter, scenes, proseRef, directiveRef,
+  mode, setMode, timeOfDay, setTimeOfDay, chapters, selCh, selSc,
+  phase, charRef, openCharDrop, loadChapter, scenes, proseRef, directiveRef,
 }) {
   const buildStackToParent = (parentId) => {
     const stack = [];
@@ -90,7 +90,10 @@ export default function LeftPanel({
         <>
           {/* codex link + write button */}
           <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <Link to="/codex" style={{ fontSize:11, color:"var(--gold2)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.04em", padding:"5px 4px", cursor:"pointer" }}>← Codex</Link>
+            <div style={{ display:"flex", gap:8 }}>
+              <Link to="/codex" style={{ fontSize:11, color:"var(--gold2)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.04em", padding:"5px 4px", cursor:"pointer" }}>← Codex</Link>
+              <Link to="/map" style={{ fontSize:11, color:"var(--gold2)", fontFamily:"sans-serif", textDecoration:"none", letterSpacing:"0.04em", padding:"5px 4px", cursor:"pointer" }}>Map</Link>
+            </div>
             <button
               onClick={async () => {
                 if (!chapters.length) return;
@@ -113,17 +116,21 @@ export default function LeftPanel({
             </button>
           </div>
 
-          {/* combined chapter + scene nav */}
+          {/* chapter nav */}
           <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid var(--border)" }}>
-            <select style={{ ...selFull, color:"var(--gold)" }} value={selSc||""} onChange={onCombinedSelect} disabled={phase==="loading"}>
+            <select
+              style={{ ...selFull, color:"var(--gold)" }}
+              value={selCh || ""}
+              onChange={e => {
+                const ch = chapters.find(c => c.id === e.target.value);
+                if (ch) loadChapter(ch);
+              }}
+              disabled={phase === "loading"}
+            >
               {chapters.map(ch => (
-                <optgroup key={ch.id} label={`${ch.sequence_number}. ${ch.title.toUpperCase()}`}>
-                  {(allScenesByChapter[ch.id] || []).map(s => (
-                    <option key={s.id} value={s.id} style={{ color:"var(--text)", paddingLeft:8 }}>
-                      {"\u00a0\u00a0"}{s.sequence_number}. {s.title}
-                    </option>
-                  ))}
-                </optgroup>
+                <option key={ch.id} value={ch.id}>
+                  {ch.sequence_number}. {ch.title}
+                </option>
               ))}
             </select>
           </div>
