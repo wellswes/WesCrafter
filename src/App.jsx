@@ -630,6 +630,40 @@ if (!pendingProse) return;
                                   {b.prose_text}
                                 </span>
                             }
+                            <div style={{ display:"flex", justifyContent:"flex-end" }}>
+                              <button
+                                style={{ background:"none", border:"none", color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"2px 8px", opacity:0.4 }}
+                                onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+                                onMouseLeave={e => e.currentTarget.style.opacity = "0.4"}
+                                onClick={async e => {
+                                  e.stopPropagation();
+                                  const existingIds = new Set(beats.map(x => x.id));
+                                  const beatsAfter = beats
+                                    .filter(x => x.sequence_number > b.sequence_number)
+                                    .sort((x, y) => y.sequence_number - x.sequence_number);
+                                  for (const ab of beatsAfter) {
+                                    await supabase.from("beats").update({ sequence_number: ab.sequence_number + 1 }).eq("id", ab.id);
+                                  }
+                                  const { error } = await supabase.from("beats").insert({
+                                    scene_id: scene.id,
+                                    sequence_number: b.sequence_number + 1,
+                                    type: "moment",
+                                    directive: "",
+                                    prose_text: "",
+                                    snap_location_id: b.snap_location_id,
+                                    snap_time_of_day: b.snap_time_of_day,
+                                    snap_scene_mode: b.snap_scene_mode,
+                                    snap_active_character_ids: b.snap_active_character_ids,
+                                    snap_pov_character_id: b.snap_pov_character_id,
+                                  });
+                                  if (error) { console.error("insert beat error:", error); return; }
+                                  const freshBeats = await fetchBeats(scene.id);
+                                  setScenesWithBeats(prev => prev.map(s => s.scene.id === scene.id ? { ...s, beats: freshBeats } : s));
+                                  const newBeat = freshBeats.find(x => !existingIds.has(x.id));
+                                  if (newBeat) { setEditingBeatId(newBeat.id); setEditingText(""); }
+                                }}
+                              >+ beat</button>
+                            </div>
                           </div>
                           );
                         })}
