@@ -11,7 +11,12 @@
       "Bash(npm run:*)",
       "mcp__claude_ai_Supabase__execute_sql",
       "Bash(rm:*)",
-      "Bash(vercel --prod)"
+      "Bash(vercel --prod)",
+      "Bash(npx vercel:*)",
+      "mcp__claude_ai_Supabase__deploy_edge_function",
+      "Read(//c/Users/wesnc/WesCrafter/WesCrafter/supabase/**)",
+      "Read(//c/Users/wesnc/WesCrafter/WesCrafter/**)",
+      "mcp__claude_ai_Supabase__get_edge_function"
     ]
   }
 }

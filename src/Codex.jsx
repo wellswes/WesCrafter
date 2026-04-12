@@ -60,17 +60,21 @@ const S = {
 
 const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
 
-const TABS         = ["Core", "Erotic", "Combat"];
+const TABS         = ["Core", "Erotic", "Combat", "Sprites", "Relationships"];
 const ROLES        = ["owner", "worker", "resident", "regular", "visitor"];
+
 const PRESENCE     = { regular:70, visitor:30 };
 
 const CORE_FIELDS = [
-  { key:"physical_appearance", label:"Appearance" },
-  { key:"personality",         label:"Personality" },
-  { key:"backstory_summary",   label:"Backstory" },
+  { key:"species",             label:"Species" },
   { key:"age",                 label:"Age" },
   { key:"occupation",          label:"Occupation" },
-  { key:"species",             label:"Species" },
+  { key:"gender",              label:"Gender" },
+  { key:"pronouns",            label:"Pronouns" },
+  { key:"physical_appearance", label:"Appearance" },
+  { key:"personality",         label:"Personality" },
+  { key:"voice_notes",         label:"Voice Notes" },
+  { key:"backstory_summary",   label:"Backstory" },
 ];
 const EROTIC_FIELDS = [
   { key:"appearance_detail",  label:"Appearance Detail" },
@@ -119,24 +123,177 @@ function FieldList({ data, fields, editing, draft, onDraftChange }) {
   );
 }
 
+// ── CoreTab ──────────────────────────────────────────────────────────────────
+function CoreTab({ char, onCharUpdate }) {
+  const [drafts, setDrafts] = useState({});
+
+  useEffect(() => { setDrafts({}); }, [char.id]);
+
+  const getVal = (key) => drafts[key] !== undefined ? drafts[key] : (char[key] ?? "");
+  const setVal = (key, val) => setDrafts(p => ({ ...p, [key]: val }));
+
+  const saveField = async (key) => {
+    if (drafts[key] === undefined) return;
+    const raw = drafts[key];
+    const saved = char[key] ?? "";
+    setDrafts(p => { const n = { ...p }; delete n[key]; return n; });
+    if (raw === saved) return;
+    const update = { [key]: raw || null };
+    await supabase.from("characters").update(update).eq("id", char.id);
+    onCharUpdate({ ...char, [key]: raw || null });
+  };
+
+  const inp = {
+    background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4,
+    color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif",
+    padding:"6px 10px", outline:"none", width:"100%",
+  };
+  const taStyle = { ...inp, lineHeight:1.7, resize:"vertical" };
+
+  const Field = ({ label, children }) => (
+    <div>
+      <div style={S.secLbl}>{label}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
+
+      {/* Row 1 — Identity: species | age */}
+      <div style={{ display:"flex", gap:12 }}>
+        <Field label="Species">
+          <input value={getVal("species")} onChange={e => setVal("species", e.target.value)}
+            onBlur={() => saveField("species")} style={inp} />
+        </Field>
+        <div style={{ width:110, flexShrink:0 }}>
+          <Field label="Age">
+            <input value={getVal("age")} onChange={e => setVal("age", e.target.value)}
+              onBlur={() => saveField("age")} style={inp} />
+          </Field>
+        </div>
+      </div>
+
+      {/* Row 2 — Role: occupation */}
+      <Field label="Occupation">
+        <input value={getVal("occupation")} onChange={e => setVal("occupation", e.target.value)}
+          onBlur={() => saveField("occupation")} style={inp} />
+      </Field>
+
+      {/* Row 3 — Gender: gender | pronouns */}
+      <div style={{ display:"flex", gap:12 }}>
+        <Field label="Gender">
+          <input value={getVal("gender")} onChange={e => setVal("gender", e.target.value)}
+            onBlur={() => saveField("gender")} style={inp} />
+        </Field>
+        <Field label="Pronouns">
+          <input value={getVal("pronouns")} onChange={e => setVal("pronouns", e.target.value)}
+            onBlur={() => saveField("pronouns")} style={inp} />
+        </Field>
+      </div>
+
+      {/* Row 4 — Appearance */}
+      <Field label="Appearance">
+        <textarea value={getVal("physical_appearance")} onChange={e => setVal("physical_appearance", e.target.value)}
+          onBlur={() => saveField("physical_appearance")} rows={6} style={taStyle} />
+      </Field>
+
+      {/* Row 5 — Personality */}
+      <Field label="Personality">
+        <textarea value={getVal("personality")} onChange={e => setVal("personality", e.target.value)}
+          onBlur={() => saveField("personality")} rows={6} style={taStyle} />
+      </Field>
+
+      {/* Row 6 — Voice Notes */}
+      <Field label="Voice Notes">
+        <textarea value={getVal("voice_notes")} onChange={e => setVal("voice_notes", e.target.value)}
+          onBlur={() => saveField("voice_notes")} rows={4} style={taStyle} />
+      </Field>
+
+      {/* Row 7 — Height */}
+      <div>
+        <div style={S.secLbl}>Height</div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          <input type="number" value={getVal("height_feet")} onChange={e => setVal("height_feet", e.target.value)}
+            onBlur={() => saveField("height_feet")} placeholder="ft"
+            style={{ ...inp, width:70, textAlign:"center" }} />
+          <span style={{ fontSize:12, color:"var(--text4)", fontFamily:"sans-serif", flexShrink:0 }}>ft</span>
+          <input type="number" value={getVal("height_inches")} onChange={e => setVal("height_inches", e.target.value)}
+            onBlur={() => saveField("height_inches")} placeholder="in"
+            style={{ ...inp, width:70, textAlign:"center" }} />
+          <span style={{ fontSize:12, color:"var(--text4)", fontFamily:"sans-serif", flexShrink:0 }}>in</span>
+          {char.height_cm != null && (
+            <span style={{ fontSize:12, color:"var(--text4)", fontFamily:"sans-serif", marginLeft:8 }}>
+              {char.height_cm} cm · ×{Number(char.height_scale).toFixed(2)}
+            </span>
+          )}
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
 // ── DetailPanel (character) ──────────────────────────────────────────────────
 function DetailPanel({ char, onCharUpdate }) {
-  const [tab,     setTab]     = useState("Core");
-  const [erotic,  setErotic]  = useState(undefined);
-  const [combat,  setCombat]  = useState(undefined);
-  const [loading, setLoading] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [draft,   setDraft]   = useState({});
-  const [saving,  setSaving]  = useState(false);
-  const [copied,  setCopied]  = useState(false);
+  const [tab,        setTab]        = useState("Core");
+  const [erotic,     setErotic]     = useState(undefined);
+  const [combat,     setCombat]     = useState(undefined);
+  const [sprites,    setSprites]    = useState(null);
+  const [rels,       setRels]       = useState(null);
+  const [relsChars,  setRelsChars]  = useState({});
+  const [loading,    setLoading]    = useState(false);
+  const [editing,    setEditing]    = useState(false);
+  const [draft,      setDraft]      = useState({});
+  const [saving,     setSaving]     = useState(false);
+  const [copied,     setCopied]     = useState(false);
+  // name editing
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft,   setNameDraft]   = useState(char.name);
+  // alias add
+  const [newAlias,    setNewAlias]    = useState("");
+  // sprite add form
+  const [spriteUrl,     setSpriteUrl]     = useState("");
+  const [spriteLabel,   setSpriteLabel]   = useState("default");
+  const [spriteDefault, setSpriteDefault] = useState(false);
 
   useEffect(() => {
-    setTab("Core"); setErotic(undefined); setCombat(undefined); setEditing(false); setLoading(true);
+    setTab("Core"); setErotic(undefined); setCombat(undefined);
+    setSprites(null); setRels(null); setRelsChars({});
+    setEditing(false); setLoading(true);
+    setEditingName(false); setNameDraft(char.name); setNewAlias("");
     Promise.all([
       supabase.from("character_erotic").select("*").eq("character_id", char.id).single(),
       supabase.from("character_combat").select("*").eq("character_id", char.id).single(),
     ]).then(([{ data: e }, { data: c }]) => { setErotic(e || null); setCombat(c || null); setLoading(false); });
   }, [char.id]);
+
+  useEffect(() => {
+    if (tab === "Sprites" && sprites === null) loadSprites();
+    if (tab === "Relationships" && rels === null) loadRels();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const loadSprites = async () => {
+    const { data } = await supabase.from("character_sprites").select("*").eq("character_id", char.id).order("is_default", { ascending: false });
+    setSprites(data || []);
+  };
+
+  const loadRels = async () => {
+    const { data: rows } = await supabase
+      .from("relationships")
+      .select("*")
+      .or(`character_a_id.eq.${char.id},character_b_id.eq.${char.id}`)
+      .order("intimacy_level", { ascending: false, nullsFirst: false });
+    setRels(rows || []);
+    const otherIds = [...new Set((rows || []).map(r => r.character_a_id === char.id ? r.character_b_id : r.character_a_id))];
+    if (otherIds.length) {
+      const { data: chars } = await supabase.from("characters").select("id, name").in("id", otherIds);
+      const map = {};
+      for (const c of chars || []) map[c.id] = c.name;
+      setRelsChars(map);
+    }
+  };
 
   const dataForTab   = () => tab === "Core" ? char   : tab === "Erotic" ? erotic  : combat;
   const fieldsForTab = () => tab === "Core" ? CORE_FIELDS : tab === "Erotic" ? EROTIC_FIELDS : COMBAT_FIELDS;
@@ -164,6 +321,7 @@ function DetailPanel({ char, onCharUpdate }) {
       }
     } finally { setSaving(false); setEditing(false); setDraft({}); }
   };
+
   const copyForNovelCrafter = () => {
     const sections = [
       { label:"CORE",   fields:CORE_FIELDS,   data:char },
@@ -181,8 +339,78 @@ function DetailPanel({ char, onCharUpdate }) {
     navigator.clipboard.writeText(lines.join("\n")).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
   };
 
-  const color = char.link_color || "#7a6e62";
-  const meta  = [char.character_group, char.role, char.species].filter(Boolean).join(" · ");
+  // ── header field saves ──
+  const saveName = async () => {
+    const trimmed = nameDraft.trim();
+    setEditingName(false);
+    if (!trimmed || trimmed === char.name) { setNameDraft(char.name); return; }
+    await supabase.from("characters").update({ name: trimmed }).eq("id", char.id);
+    onCharUpdate({ ...char, name: trimmed });
+  };
+
+  const saveCharType = async (val) => {
+    await supabase.from("characters").update({ char_type: val }).eq("id", char.id);
+    onCharUpdate({ ...char, char_type: val });
+  };
+
+  const addAlias = async () => {
+    const trimmed = newAlias.trim();
+    if (!trimmed) return;
+    const updated = [...(char.aliases || []), trimmed];
+    await supabase.from("characters").update({ aliases: updated }).eq("id", char.id);
+    onCharUpdate({ ...char, aliases: updated });
+    setNewAlias("");
+  };
+
+  const removeAlias = async (idx) => {
+    const updated = (char.aliases || []).filter((_, i) => i !== idx);
+    await supabase.from("characters").update({ aliases: updated }).eq("id", char.id);
+    onCharUpdate({ ...char, aliases: updated });
+  };
+
+  // ── sprite saves ──
+  const addSprite = async () => {
+    if (!spriteUrl.trim()) return;
+    const isDefault = spriteDefault || (sprites || []).length === 0;
+    if (isDefault) {
+      await supabase.from("character_sprites").update({ is_default: false }).eq("character_id", char.id);
+    }
+    await supabase.from("character_sprites").insert({
+      character_id: char.id,
+      portrait_url: spriteUrl.trim(),
+      label: spriteLabel.trim() || "default",
+      is_default: isDefault,
+    });
+    if (isDefault) {
+      await supabase.from("characters").update({ portrait_url: spriteUrl.trim() }).eq("id", char.id);
+      onCharUpdate({ ...char, portrait_url: spriteUrl.trim() });
+    }
+    setSpriteUrl(""); setSpriteLabel("default"); setSpriteDefault(false);
+    loadSprites();
+  };
+
+  const setDefaultSprite = async (sprite) => {
+    await supabase.from("character_sprites").update({ is_default: false }).eq("character_id", char.id);
+    await supabase.from("character_sprites").update({ is_default: true }).eq("id", sprite.id);
+    await supabase.from("characters").update({ portrait_url: sprite.portrait_url }).eq("id", char.id);
+    onCharUpdate({ ...char, portrait_url: sprite.portrait_url });
+    loadSprites();
+  };
+
+  const deleteSprite = async (sprite) => {
+    await supabase.from("character_sprites").delete().eq("id", sprite.id);
+    if (sprite.is_default) {
+      await supabase.from("characters").update({ portrait_url: null }).eq("id", char.id);
+      onCharUpdate({ ...char, portrait_url: null });
+    }
+    loadSprites();
+  };
+
+  const color       = char.link_color || "#7a6e62";
+  const meta        = [char.character_group, char.role, char.species].filter(Boolean).join(" · ");
+  const charType    = char.char_type || "supporting";
+  const aliasesList = char.aliases || [];
+  const isTextTab   = ["Erotic", "Combat"].includes(tab);
 
   return (
     <div style={{ display:"flex", gap:28, alignItems:"flex-start" }}>
@@ -193,9 +421,31 @@ function DetailPanel({ char, onCharUpdate }) {
         }
       </div>
       <div style={{ flex:1, minWidth:0 }}>
+        {/* name + char_type + actions */}
         <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, marginBottom:4 }}>
-          <div style={S.name}>{char.name}</div>
-          {!loading && (
+          <div style={{ display:"flex", alignItems:"center", gap:8, flex:1, minWidth:0 }}>
+            {editingName
+              ? <input
+                  value={nameDraft}
+                  onChange={e => setNameDraft(e.target.value)}
+                  onBlur={saveName}
+                  onKeyDown={e => { if (e.key === "Enter") saveName(); if (e.key === "Escape") { setEditingName(false); setNameDraft(char.name); } }}
+                  autoFocus
+                  style={{ fontSize:28, color:"var(--gold)", fontWeight:"normal", background:"transparent", border:"none", borderBottom:"1px solid var(--gold2)", outline:"none", fontFamily:"Georgia, serif", minWidth:0, flex:1 }}
+                />
+              : <div style={{ ...S.name, cursor:"text", flex:1 }} onClick={() => { setEditingName(true); setNameDraft(char.name); }}>{char.name}</div>
+            }
+            <select
+              value={charType}
+              onChange={e => saveCharType(e.target.value)}
+              style={{ fontSize:10, fontFamily:"sans-serif", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text4)", padding:"2px 6px", cursor:"pointer", flexShrink:0, letterSpacing:"0.06em", textTransform:"uppercase" }}
+            >
+              <option value="main">main</option>
+              <option value="supporting">supporting</option>
+              <option value="background">background</option>
+            </select>
+          </div>
+          {!loading && isTextTab && (
             <div style={{ display:"flex", gap:6, flexShrink:0, paddingTop:6 }}>
               <button onClick={copyForNovelCrafter} style={taBtn}>{copied ? "Copied!" : "Copy"}</button>
               {editing
@@ -207,6 +457,26 @@ function DetailPanel({ char, onCharUpdate }) {
           )}
         </div>
         {meta && <div style={S.meta}>{meta}</div>}
+
+        {/* aliases */}
+        <div style={{ display:"flex", flexWrap:"wrap", gap:5, marginBottom:12, alignItems:"center" }}>
+          {aliasesList.map((alias, i) => (
+            <span key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, fontFamily:"sans-serif", padding:"2px 8px", borderRadius:10, background:"var(--bg4)", border:"1px solid var(--border2)", color:"var(--text3)" }}>
+              {alias}
+              <button onClick={() => removeAlias(i)} style={{ background:"none", border:"none", cursor:"pointer", color:"var(--text4)", fontSize:10, padding:"0 0 0 2px", lineHeight:1 }}>✕</button>
+            </span>
+          ))}
+          <form onSubmit={e => { e.preventDefault(); addAlias(); }} style={{ display:"flex" }}>
+            <input
+              value={newAlias}
+              onChange={e => setNewAlias(e.target.value)}
+              placeholder="+ alias"
+              style={{ fontSize:11, fontFamily:"sans-serif", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:10, color:"var(--text3)", padding:"2px 8px", outline:"none", width:72 }}
+            />
+          </form>
+        </div>
+
+        {/* tabs */}
         <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
           {TABS.map(t => (
             <button key={t} onClick={() => { if (!editing) setTab(t); }} style={{
@@ -218,11 +488,121 @@ function DetailPanel({ char, onCharUpdate }) {
             }}>{t}</button>
           ))}
         </div>
-        {loading
-          ? <div style={S.msg}>Loading…</div>
-          : <FieldList data={dataForTab()} fields={fieldsForTab()} editing={editing} draft={draft}
-              onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))} />
-        }
+
+        {/* core tab */}
+        {tab === "Core" && <CoreTab char={char} onCharUpdate={onCharUpdate} />}
+
+        {/* erotic / combat tabs */}
+        {isTextTab && (
+          loading
+            ? <div style={S.msg}>Loading…</div>
+            : <FieldList data={dataForTab()} fields={fieldsForTab()} editing={editing} draft={draft}
+                onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))} />
+        )}
+
+        {/* sprites tab */}
+        {tab === "Sprites" && (
+          <div>
+            <div style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, padding:"12px 14px", marginBottom:16 }}>
+              <div style={{ fontSize:10, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10 }}>Add Sprite</div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                <input
+                  value={spriteUrl}
+                  onChange={e => setSpriteUrl(e.target.value)}
+                  placeholder="Portrait URL"
+                  style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, fontFamily:"sans-serif", padding:"6px 10px", outline:"none" }}
+                />
+                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                  <input
+                    value={spriteLabel}
+                    onChange={e => setSpriteLabel(e.target.value)}
+                    placeholder="Label (default, combat…)"
+                    style={{ flex:1, minWidth:120, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, fontFamily:"sans-serif", padding:"6px 10px", outline:"none" }}
+                  />
+                  <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:12, fontFamily:"sans-serif", color:"var(--text3)", cursor:"pointer", flexShrink:0 }}>
+                    <input type="checkbox" checked={spriteDefault} onChange={e => setSpriteDefault(e.target.checked)} />
+                    Set as default
+                  </label>
+                  <button onClick={addSprite} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)", flexShrink:0 }}>Add</button>
+                </div>
+              </div>
+            </div>
+            {sprites === null
+              ? <div style={S.msg}>Loading…</div>
+              : sprites.length === 0
+              ? <div style={S.msg}>No sprites yet.</div>
+              : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {sprites.map(sp => (
+                    <div key={sp.id} style={{ display:"flex", alignItems:"center", gap:12, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, padding:"10px 12px" }}>
+                      <img src={sp.portrait_url} alt={sp.label} style={{ width:56, height:56, objectFit:"cover", borderRadius:4, border:`2px solid ${sp.is_default ? "var(--gold)" : "var(--border2)"}`, flexShrink:0 }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:13, fontFamily:"sans-serif", color:"var(--text)", marginBottom:4 }}>{sp.label || "—"}</div>
+                        {sp.is_default && (
+                          <span style={{ fontSize:9, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", background:"#2a2010", border:"1px solid var(--gold2)", borderRadius:3, color:"var(--gold)", padding:"1px 6px" }}>default</span>
+                        )}
+                      </div>
+                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                        {!sp.is_default && (
+                          <button onClick={() => setDefaultSprite(sp)} style={taBtn}>Set Default</button>
+                        )}
+                        <button onClick={() => deleteSprite(sp)} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
+        )}
+
+        {/* relationships tab */}
+        {tab === "Relationships" && (
+          <div>
+            {rels === null
+              ? <div style={S.msg}>Loading…</div>
+              : rels.length === 0
+              ? <div style={S.msg}>No relationships on record.</div>
+              : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {rels.map(r => {
+                    const otherId   = r.character_a_id === char.id ? r.character_b_id : r.character_a_id;
+                    const otherName = relsChars[otherId] || (otherId ? otherId.slice(0, 8) + "…" : "?");
+                    return (
+                      <div key={r.id} style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, padding:"12px 14px" }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8, flexWrap:"wrap" }}>
+                          <span style={{ fontSize:13, fontFamily:"sans-serif", fontWeight:600, color:"var(--text)" }}>{otherName}</span>
+                          {r.status && (
+                            <span style={{ fontSize:10, fontFamily:"sans-serif", padding:"2px 8px", borderRadius:10, background:"var(--bg4)", border:"1px solid var(--border2)", color:"var(--text3)", textTransform:"uppercase", letterSpacing:"0.06em" }}>{r.status}</span>
+                          )}
+                        </div>
+                        <div style={{ display:"flex", gap:20, marginBottom: r.dynamic_notes ? 8 : 0 }}>
+                          {r.intimacy_level != null && (
+                            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                              <span style={{ fontSize:9, fontFamily:"sans-serif", color:"var(--text4)", letterSpacing:"0.08em", textTransform:"uppercase" }}>Intimacy</span>
+                              <span style={{ fontSize:16, fontFamily:"sans-serif", color:"#c084fc", fontWeight:"bold" }}>{r.intimacy_level}</span>
+                            </div>
+                          )}
+                          {r.tension_level != null && (
+                            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                              <span style={{ fontSize:9, fontFamily:"sans-serif", color:"var(--text4)", letterSpacing:"0.08em", textTransform:"uppercase" }}>Tension</span>
+                              <span style={{ fontSize:16, fontFamily:"sans-serif", color:"#f97316", fontWeight:"bold" }}>{r.tension_level}</span>
+                            </div>
+                          )}
+                          {r.trust_level != null && (
+                            <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
+                              <span style={{ fontSize:9, fontFamily:"sans-serif", color:"var(--text4)", letterSpacing:"0.08em", textTransform:"uppercase" }}>Trust</span>
+                              <span style={{ fontSize:16, fontFamily:"sans-serif", color:"#60c8a0", fontWeight:"bold" }}>{r.trust_level}</span>
+                            </div>
+                          )}
+                        </div>
+                        {r.dynamic_notes && (
+                          <div style={{ fontSize:12, color:"var(--text3)", fontFamily:"sans-serif", lineHeight:1.55, fontStyle:"italic" }}>{r.dynamic_notes}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+            }
+          </div>
+        )}
       </div>
     </div>
   );
@@ -472,6 +852,133 @@ function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setS
   );
 }
 
+// ── Lore helpers ─────────────────────────────────────────────────────────────
+const formatCategory = s => (s || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+const loreBadge = { fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.06em", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:3, padding:"2px 6px", color:"var(--text4)", flexShrink:0 };
+
+function LorePanel({ entries, onSelect }) {
+  if (!entries.length) return <div style={S.msg}>No lore entries found.</div>;
+  const groups = {};
+  for (const e of entries) {
+    const cat = e.category || "uncategorized";
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push(e);
+  }
+  const cats = Object.keys(groups).sort();
+  for (const cat of cats) groups[cat].sort((a, b) => a.title.localeCompare(b.title));
+  return (
+    <div>
+      {cats.map(cat => (
+        <div key={cat} style={{ marginBottom:28 }}>
+          <div style={{ fontSize:10, color:"var(--gold2)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", borderBottom:"1px solid var(--border)", paddingBottom:6, marginBottom:8 }}>
+            {formatCategory(cat)}
+          </div>
+          {groups[cat].map(entry => (
+            <div key={entry.id} onClick={() => onSelect(entry)}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--bg3)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+              style={{ display:"flex", alignItems:"center", gap:10, padding:"7px 10px", cursor:"pointer", borderRadius:4, transition:"background 0.1s" }}>
+              <span style={{ fontFamily:"Georgia, serif", fontSize:14, color:"var(--text)", flex:1 }}>{entry.title}</span>
+              <div style={{ display:"flex", gap:4, flexWrap:"wrap", justifyContent:"flex-end" }}>
+                {(entry.tags || []).map(tag => <span key={tag} style={loreBadge}>{tag}</span>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LoreModal({ entry, onClose, onUpdate, onDelete }) {
+  const [editing,  setEditing]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [confirm,  setConfirm]  = useState(false);
+  const [draft,    setDraft]    = useState({});
+
+  const startEdit = () => {
+    setDraft({ title: entry.title || "", category: entry.category || "", tags: (entry.tags || []).join(", "), body_text: entry.body_text || "" });
+    setEditing(true);
+  };
+  const cancelEdit = () => { setEditing(false); setDraft({}); };
+
+  const save = async () => {
+    setSaving(true);
+    const tags = draft.tags.split(",").map(t => t.trim()).filter(Boolean);
+    const payload = { title: draft.title || null, category: draft.category || null, tags, body_text: draft.body_text || null };
+    await supabase.from("lore_entries").update(payload).eq("id", entry.id);
+    onUpdate({ ...entry, ...payload });
+    setSaving(false);
+    setEditing(false);
+  };
+
+  const del = async () => {
+    await supabase.from("lore_entries").delete().eq("id", entry.id);
+    onDelete(entry.id);
+    onClose();
+  };
+
+  const inp = { width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", padding:"7px 10px", outline:"none" };
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.72)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:8, padding:"28px 32px", maxWidth:660, width:"90%", maxHeight:"82vh", overflowY:"auto", position:"relative" }}>
+        {/* close */}
+        <button onClick={onClose} style={{ position:"absolute", top:12, right:14, background:"none", border:"none", color:"var(--text4)", fontSize:18, cursor:"pointer", lineHeight:1 }}>✕</button>
+
+        {!editing ? (
+          <>
+            <div style={{ fontSize:24, color:"var(--gold)", fontWeight:"normal", marginBottom:6, paddingRight:24 }}>{entry.title}</div>
+            <div style={{ fontSize:10, color:"var(--gold2)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10 }}>{formatCategory(entry.category)}</div>
+            {(entry.tags || []).length > 0 && (
+              <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:16 }}>
+                {entry.tags.map(tag => <span key={tag} style={loreBadge}>{tag}</span>)}
+              </div>
+            )}
+            <div style={{ fontSize:15, lineHeight:1.8, color:"var(--text)", whiteSpace:"pre-wrap" }}>{entry.body_text}</div>
+            <div style={{ display:"flex", gap:8, marginTop:20 }}>
+              <button onClick={startEdit} style={{ ...taBtn }}>Edit</button>
+              {!confirm
+                ? <button onClick={() => setConfirm(true)} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Delete</button>
+                : <>
+                    <span style={{ fontSize:12, fontFamily:"sans-serif", color:"var(--text4)", alignSelf:"center" }}>Delete this entry?</span>
+                    <button onClick={del} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Yes, delete</button>
+                    <button onClick={() => setConfirm(false)} style={{ ...taBtn }}>Cancel</button>
+                  </>
+              }
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ marginBottom:14 }}>
+              <div style={S.secLbl}>Title</div>
+              <input value={draft.title} onChange={e => setDraft(p => ({...p, title: e.target.value}))} style={inp} />
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={S.secLbl}>Category</div>
+              <input value={draft.category} onChange={e => setDraft(p => ({...p, category: e.target.value}))} style={inp} placeholder="e.g. found_object" />
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={S.secLbl}>Tags (comma-separated)</div>
+              <input value={draft.tags} onChange={e => setDraft(p => ({...p, tags: e.target.value}))} style={inp} />
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={S.secLbl}>Body</div>
+              <textarea value={draft.body_text} onChange={e => setDraft(p => ({...p, body_text: e.target.value}))} rows={8}
+                style={{ ...inp, resize:"vertical", lineHeight:1.7 }} />
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={save} disabled={saving} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
+              <button onClick={cancelEdit} disabled={saving} style={{ ...taBtn }}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Codex ────────────────────────────────────────────────────────────────────
 export default function Codex() {
   const [section,      setSection]      = useState("characters");
@@ -528,6 +1035,10 @@ export default function Codex() {
     return saved ? new Set(JSON.parse(saved)) : null;
   });
   const [selected,     setSelected]     = useState(null);
+  // lore
+  const [loreEntries,  setLoreEntries]  = useState(null);
+  const [loreLoading,  setLoreLoading]  = useState(false);
+  const [loreModal,    setLoreModal]    = useState(null);
   // places
   const [places,       setPlaces]       = useState([]);
   const [placesCollapsed, setPlacesCollapsed] = useState(() => {
@@ -553,7 +1064,7 @@ export default function Codex() {
           { data: story },
           { data: plcs,    error: e3 },
         ] = await Promise.all([
-          supabase.from("characters").select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, group_id, character_group").eq("world_id", WORLD_ID).order("name"),
+          supabase.from("characters").select("id, name, role, species, age, occupation, portrait_url, link_color, physical_appearance, personality, backstory_summary, voice_notes, gender, pronouns, height_feet, height_inches, height_cm, height_scale, group_id, character_group, char_type, aliases").eq("world_id", WORLD_ID).order("name"),
           supabase.from("character_groups").select("id, name, link_color, sort_order").order("sort_order"),
           supabase.from("stories").select("title").eq("id", STORY_ID).single(),
           supabase.from("places").select("id, name, place_type, parent_id, description, atmosphere").eq("world_id", WORLD_ID).order("name"),
@@ -607,6 +1118,15 @@ export default function Codex() {
   useEffect(() => {
     localStorage.setItem("codex_collapsed_places", JSON.stringify([...placesCollapsed]));
   }, [placesCollapsed]);
+
+  // ── lore lazy load ──
+  useEffect(() => {
+    if (section !== "lore" || loreEntries !== null || loreLoading) return;
+    setLoreLoading(true);
+    supabase.from("lore_entries").select("id, title, category, body_text, tags")
+      .eq("world_id", WORLD_ID)
+      .then(({ data }) => { setLoreEntries(data || []); setLoreLoading(false); });
+  }, [section, loreEntries, loreLoading]);
 
   // ── character drag/drop for group reassign ──
   const onCharDragStart = (e, charId) => {
@@ -677,14 +1197,13 @@ export default function Codex() {
 
         <div style={S.body}>
           {/* sidebar */}
-          <div style={{ ...S.sidebar, width:sidebarWidth }}>
+          <div style={{ ...S.sidebar, width: section === "lore" ? "auto" : sidebarWidth, minWidth: section === "lore" ? 0 : undefined }}>
             {/* section toggle */}
             <div style={S.secToggle}>
-              {["characters","places"].map(s => (
+              {["characters","places","lore"].map(s => (
                 <button key={s} onClick={() => setSection(s)} style={{
                   ...S.secBtn,
                   color:       section === s ? "var(--gold)"   : "var(--text4)",
-                  borderBottom: section === s ? "2px solid var(--gold)" : "2px solid transparent",
                   background: "none", border:"none", borderBottom: section === s ? "2px solid var(--gold)" : "2px solid transparent",
                 }}>{s}</button>
               ))}
@@ -746,14 +1265,16 @@ export default function Codex() {
             )}
           </div>
 
-          {/* resize handle */}
-          <div onMouseDown={onResizeMouseDown}
-            style={{ width:4, flexShrink:0, cursor:"col-resize", background:"transparent" }}
-            onMouseEnter={e => e.currentTarget.style.background = "var(--border2)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"} />
+          {/* resize handle — hidden for lore */}
+          {section !== "lore" && (
+            <div onMouseDown={onResizeMouseDown}
+              style={{ width:4, flexShrink:0, cursor:"col-resize", background:"transparent" }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--border2)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"} />
+          )}
 
           {/* detail panel */}
-          <div style={S.panel}>
+          <div style={{ ...S.panel, paddingLeft: section === "lore" ? 48 : 0 }}>
             {section === "characters" && (
               !selected
                 ? <div style={S.msg}>Select a character.</div>
@@ -765,8 +1286,29 @@ export default function Codex() {
                 ? <div style={S.msg}>Select a location.</div>
                 : <LocationDetail key={selectedPlace.id} place={selectedPlace} characters={characters} />
             )}
+            {section === "lore" && (
+              loreLoading || loreEntries === null
+                ? <div style={S.msg}>Loading…</div>
+                : <LorePanel entries={loreEntries} onSelect={setLoreModal} />
+            )}
           </div>
         </div>
+
+        {/* lore modal */}
+        {loreModal && (
+          <LoreModal
+            entry={loreModal}
+            onClose={() => setLoreModal(null)}
+            onUpdate={updated => {
+              setLoreEntries(prev => (prev || []).map(e => e.id === updated.id ? updated : e));
+              setLoreModal(updated);
+            }}
+            onDelete={id => {
+              setLoreEntries(prev => (prev || []).filter(e => e.id !== id));
+              setLoreModal(null);
+            }}
+          />
+        )}
       </div>
     </>
   );

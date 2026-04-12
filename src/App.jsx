@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { Routes, Route } from "react-router-dom";
 import Codex from "./Codex.jsx";
@@ -8,7 +8,28 @@ import PortraitBand from "./PortraitBand.jsx";
 import WritePanel from "./WritePanel.jsx";
 import LeftPanel from "./LeftPanel.jsx";
 import StoryMap from "./StoryMap.jsx";
+import ProcessChapterPanel from "./ProcessChapterPanel.jsx";
+import UpdateCodexPanel from "./UpdateCodexPanel.jsx";
+import ImportPanel from "./ImportPanel.jsx";
 import { supabase, STORY_ID, WORLD_ID, TIMES, MODES, CSS, selFull, panelLbl, fullBtn, dropBase, dropItem, fetchChapters, fetchScenes, fetchBeats, fetchCharacters, fetchGroups, fetchPlaces } from "./constants.js";
+
+// ── charMatchesInProse ────────────────────────────────────────────────────────
+// Returns true if char's name, first name (if multi-word), or any alias appears
+// in prose with word boundaries (case-insensitive).
+function charMatchesInProse(char, prose) {
+  const terms = [char.name];
+  const firstName = char.name.split(' ')[0];
+  if (firstName !== char.name) terms.push(firstName);
+  for (const alias of (char.aliases || [])) {
+    if (alias) terms.push(alias);
+  }
+  return terms.some(term => {
+    try {
+      const re = new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      return re.test(prose);
+    } catch { return false; }
+  });
+}
 
 // ── ProseViewer ───────────────────────────────────────────────────────────────
 function ProseViewer() {
@@ -36,12 +57,17 @@ function ProseViewer() {
   const [povCharacterId, setPovCharacterId] = useState(null);
   const [charPositions,   setCharPositions]   = useState({}); // { [charId]: { x, y, z, scale } }
   const [selectedCharId,  setSelectedCharId]  = useState(null);
-  const [directive,      setDirective]      = useState("");
+  const [directive,      setDirective]      = useState(() => sessionStorage.getItem("directive") || "");
   const [generating,     setGenerating]     = useState(false);
-  const [pendingProse,   setPendingProse]   = useState(null); // { prose, directive, sceneId, sceneState }
+  const [pendingProse,   setPendingProse]   = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem("pendingProse") || "null"); } catch { return null; }
+  });
   const [uncertainChars, setUncertainChars] = useState({}); // { charId: true }
-  const [editingBeatId,  setEditingBeatId]  = useState(null);
-  const [editingText,    setEditingText]    = useState("");
+  const [editingBeatId,        setEditingBeatId]        = useState(null);
+  const [editingText,          setEditingText]          = useState("");
+  const [processChapterOpen,   setProcessChapterOpen]   = useState(false);
+  const [updateCodexOpen,      setUpdateCodexOpen]      = useState(false);
+  const [importOpen,           setImportOpen]           = useState(false);
   const [activeBeatId,   setActiveBeatId]   = useState(null);
   const prevActiveBeatIdRef = useRef(null);
   const leftPanelRef  = useRef(null);
@@ -57,6 +83,41 @@ function ProseViewer() {
   const observerRef       = useRef(null);
   const scrollContainerRef = useRef(null);
   const bandRef                    = useRef(null);
+  const pendingProseRef            = useRef(null);
+
+  // ── Name highlighting ─────────────────────────────────────────────────────
+  // Build a sorted list of { text, color } entries from characters (name + aliases)
+  // and places. Longest entries first so multi-word names match before first names.
+  const nameEntries = useMemo(() => {
+    const groupColor = Object.fromEntries(allGroups.map(g => [g.id, g.link_color]));
+    const entries = [];
+    for (const char of allChars) {
+      const color = (char.group_id && groupColor[char.group_id]) || char.link_color;
+      if (!color) continue;
+      const names = [char.name, ...(char.aliases || [])].filter(n => n?.trim().length > 1);
+      for (const n of names) entries.push({ text: n.trim(), color });
+    }
+    for (const loc of allLocs) {
+      if (loc.name?.trim().length > 2) entries.push({ text: loc.name.trim(), color: "#5a7a6a" });
+    }
+    return entries.sort((a, b) => b.text.length - a.text.length);
+  }, [allChars, allGroups, allLocs]);
+
+  const highlightNames = useCallback((text) => {
+    if (!text || !nameEntries.length) return text;
+    const esc = nameEntries.map(e => e.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const regex = new RegExp(`\\b(${esc.join("|")})\\b`, "gi");
+    const parts = [];
+    let last = 0, m;
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index > last) parts.push(text.slice(last, m.index));
+      const entry = nameEntries.find(e => e.text.toLowerCase() === m[0].toLowerCase());
+      parts.push(<span key={m.index} style={{ color: entry.color }}>{m[0]}</span>);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts.length ? parts : text;
+  }, [nameEntries]);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -188,21 +249,74 @@ function ProseViewer() {
         `[${scene.title}]\n${beats.map(b => b.prose_text || "").filter(Boolean).join("\n\n")}`
       ).join("\n\n---\n\n");
 
-      // Chapter summary + prompt modifier in parallel
-      const [{ data: chData }, { data: pmData }] = await Promise.all([
+      // Identify adjacent chapters for context
+      const currentChapter = chapters.find(c => c.id === selCh);
+      const currentSeq     = currentChapter?.sequence_number ?? 0;
+      const prevChapter    = chapters.find(c => c.sequence_number === currentSeq - 1);
+      const olderChapters  = chapters.filter(c => c.sequence_number === currentSeq - 2 || c.sequence_number === currentSeq - 3);
+
+      // Previous chapter prose — fetch scenes then beats sequentially
+      const fetchPrevChapterProse = async () => {
+        if (!prevChapter) return "";
+        const { data: prevScenes } = await supabase
+          .from("scenes").select("id, sequence_number")
+          .eq("chapter_id", prevChapter.id).order("sequence_number");
+        if (!prevScenes?.length) return "";
+        const { data: prevBeats } = await supabase
+          .from("beats").select("prose_text, sequence_number, scene_id")
+          .in("scene_id", prevScenes.map(s => s.id)).order("sequence_number");
+        if (!prevBeats?.length) return "";
+        const sceneSeq = Object.fromEntries(prevScenes.map(s => [s.id, s.sequence_number]));
+        return prevBeats
+          .sort((a, b) => sceneSeq[a.scene_id] - sceneSeq[b.scene_id] || a.sequence_number - b.sequence_number)
+          .map(b => b.prose_text || "").filter(Boolean).join("\n\n");
+      };
+
+      // All parallel fetches
+      const charIds = sceneChars.map(c => c.id);
+      let charSel = "id, name, role, species, age, occupation, physical_appearance, personality, backstory_summary, gender, pronouns, voice_notes";
+      if (mode === "intimate") charSel += ", erotic_profile";
+      if (mode === "combat")   charSel += ", combat_profile";
+
+      const [
+        { data: chData },
+        { data: pmData },
+        { data: charData },
+        { data: olderChData },
+        { data: relsData },
+        prevChapterProse,
+      ] = await Promise.all([
         supabase.from("chapters").select("context_summary").eq("id", selCh).single(),
         supabase.from("app_settings").select("value").eq("key", `prompt_modifier_${mode}`).single(),
+        sceneChars.length
+          ? supabase.from("characters").select(charSel).in("id", charIds)
+          : Promise.resolve({ data: null }),
+        olderChapters.length
+          ? supabase.from("chapters").select("sequence_number, title, context_summary").in("id", olderChapters.map(c => c.id))
+          : Promise.resolve({ data: [] }),
+        charIds.length
+          ? supabase.from("relationships")
+              .select("character_a_id, character_b_id, status, intimacy_level, tension_level, trust_level, dynamic_notes")
+              .or(`character_a_id.in.(${charIds.join(",")}),character_b_id.in.(${charIds.join(",")})`)
+          : Promise.resolve({ data: [] }),
+        fetchPrevChapterProse(),
       ]);
 
-      // Character details — fetch extra fields for intimate/combat
-      let sceneCharsWithData = sceneChars;
-      if (sceneChars.length) {
-        let sel = "id, name, role, species, age, occupation, physical_appearance, personality, backstory_summary";
-        if (mode === "intimate") sel += ", erotic_profile";
-        if (mode === "combat")   sel += ", combat_profile";
-        const { data: charData } = await supabase.from("characters").select(sel).in("id", sceneChars.map(c => c.id));
-        if (charData) sceneCharsWithData = charData;
-      }
+      const sceneCharsWithData = charData || sceneChars;
+
+      // chapter summaries as objects so the edge function can label them by title
+      const chapterSummaries = (olderChData || [])
+        .sort((a, b) => a.sequence_number - b.sequence_number)
+        .filter(c => c.context_summary)
+        .map(c => ({ title: c.title, context_summary: c.context_summary }));
+
+      // enrich relationships with character names for readability in the prompt
+      const charNameMap = Object.fromEntries(sceneCharsWithData.map(c => [c.id, c.name]));
+      const enrichedRelationships = (relsData || []).map(r => ({
+        ...r,
+        character_a_name: charNameMap[r.character_a_id] || null,
+        character_b_name: charNameMap[r.character_b_id] || null,
+      })).filter(r => r.character_a_name && r.character_b_name);
 
       const response = await fetch("https://gjvegoinppbpfusttycs.supabase.co/functions/v1/generate-prose", {
         method: "POST",
@@ -210,19 +324,21 @@ function ProseViewer() {
         body: JSON.stringify({
           directive,
           proseContext,
-          characters:        sceneCharsWithData,
+          characters:            sceneCharsWithData,
           location,
           timeOfDay,
-          sceneMode:         mode,
-          chapterSummary:    chData?.context_summary || "",
-          promptModifier:    pmData?.value || "",
-          povCharacterName:  allChars.find(c => c.id === povCharacterId)?.name || "Zep",
+          sceneMode:             mode,
+          chapterSummary:        chData?.context_summary || "",
+          chapterSummaries,
+          previousChapterProse:  prevChapterProse,
+          relationships:         enrichedRelationships,
+          promptModifier:        pmData?.value || "",
+          povCharacterName:      allChars.find(c => c.id === povCharacterId)?.name || "Zep",
         }),
       });
       const result = await response.json();
       if (result.error) throw new Error(result.error);
-      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, sceneState: result.scene_state || null });
-      setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" }), 80);
+      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, sceneState: result.scene_state || null, _key: Date.now() });
     } catch (e) {
       alert("Generation failed: " + e.message);
     } finally {
@@ -358,6 +474,15 @@ if (!pendingProse) return;
       }
     }
 
+    // Supplement snap chars with prose scan (first name + aliases support)
+    const proseAdds = allChars.filter(c =>
+      !snapChars.find(s => s.id === c.id) && charMatchesInProse(c, prose)
+    );
+    if (proseAdds.length) {
+      snapChars = [...snapChars, ...proseAdds];
+      setSceneChars(snapChars);
+    }
+
     // Flush scene_state immediately (don't wait for debounce)
     await supabase.from("scene_state").upsert({
       story_id:             STORY_ID,
@@ -386,20 +511,68 @@ if (!pendingProse) return;
     setPendingProse(null);
     setDirective("");
     if (taRef.current) { taRef.current.value = ""; taRef.current.style.height = ""; }
-    setTimeout(() => proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" }), 80);
+    setTimeout(() => {
+      proseRef.current?.scrollTo({ top: proseRef.current.scrollHeight, behavior: "smooth" });
+      taRef.current?.focus();
+    }, 120);
   };
 
   const saveBeatProse = async (beatId, text) => {
     setEditingBeatId(null);
-    await supabase.from("beats").update({ prose_text: text }).eq("id", beatId);
+    const proseChars = allChars.filter(c => charMatchesInProse(c, text));
+    const updatePayload = { prose_text: text };
+    if (proseChars.length) {
+      const { data: beatRow } = await supabase.from("beats").select("snap_active_character_ids").eq("id", beatId).single();
+      const existing = new Set(beatRow?.snap_active_character_ids || []);
+      proseChars.forEach(c => existing.add(c.id));
+      updatePayload.snap_active_character_ids = [...existing];
+    }
+    await supabase.from("beats").update(updatePayload).eq("id", beatId);
     setScenesWithBeats(prev => prev.map(sw => ({
       ...sw,
-      beats: sw.beats.map(b => b.id === beatId ? { ...b, prose_text: text } : b),
+      beats: sw.beats.map(b => b.id === beatId ? { ...b, ...updatePayload } : b),
     })));
+  };
+
+  const handleStartNewChapter = async () => {
+    const maxSeq = chapters.length > 0 ? Math.max(...chapters.map(c => c.sequence_number)) : 0;
+    const { data: ch, error: e1 } = await supabase
+      .from("chapters")
+      .insert({ story_id: STORY_ID, sequence_number: maxSeq + 1, title: "New Chapter" })
+      .select("id, sequence_number, title")
+      .single();
+    if (e1) throw e1;
+    const { data: sc, error: e2 } = await supabase
+      .from("scenes")
+      .insert({ chapter_id: ch.id, sequence_number: 1, title: "Scene 1" })
+      .select("id")
+      .single();
+    if (e2) throw e2;
+    const { error: e3 } = await supabase
+      .from("beats")
+      .insert({ scene_id: sc.id, sequence_number: 1, type: "moment", prose_text: "", directive: "" });
+    if (e3) throw e3;
+    setChapters(prev => [...prev, ch]);
+    await loadChapter(ch);
   };
 
   // Clear active beat when scene changes
   useEffect(() => { setActiveBeatId(null); }, [selSc]);
+
+  // Persist pending prose and directive across navigation
+  useEffect(() => {
+    if (pendingProse) sessionStorage.setItem("pendingProse", JSON.stringify(pendingProse));
+    else sessionStorage.removeItem("pendingProse");
+  }, [pendingProse]);
+  useEffect(() => {
+    if (directive) sessionStorage.setItem("directive", directive);
+    else sessionStorage.removeItem("directive");
+  }, [directive]);
+
+  // Scroll pending prose block into view only when new prose first arrives (not on every edit)
+  useEffect(() => {
+    if (pendingProse) setTimeout(() => pendingProseRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }, [pendingProse?._key]);
 
   // Remove charPositions for characters no longer in scene
   useEffect(() => {
@@ -463,6 +636,15 @@ if (!pendingProse) return;
     setShowChar(p => !p);
   };
 
+  const [openGroups, setOpenGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("charDropOpenGroups") || "{}"); } catch { return {}; }
+  });
+  const toggleGroup = name => setOpenGroups(prev => {
+    const next = { ...prev, [name]: !prev[name] };
+    localStorage.setItem("charDropOpenGroups", JSON.stringify(next));
+    return next;
+  });
+
   const charDropdown = showChar ? createPortal(
     (() => {
       const groupNames = new Set(allGroups.map(g => g.name));
@@ -475,7 +657,7 @@ if (!pendingProse) return;
         return (
           <div key={c.id}
             style={{ padding:"5px 10px", fontSize:12, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", gap:7 }}
-            onMouseEnter={e => e.currentTarget.style.background="var(--bg4)"}
+            onMouseEnter={e => e.currentTarget.style.background="rgba(0,0,0,0.05)"}
             onMouseLeave={e => e.currentTarget.style.background="transparent"}
             onClick={() => addChar(c)}>
             {c.portrait_url
@@ -486,27 +668,35 @@ if (!pendingProse) return;
           </div>
         );
       };
+      const dropTop = charDropPos?.top ?? 0;
+      const maxHeight = Math.min(500, window.innerHeight - dropTop - 8);
       return (
-        <div ref={charDropRef} style={{ position:"fixed", top: charDropPos?.top ?? 0, left: charDropPos?.left ?? 0, zIndex:9999, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, minWidth:220, maxHeight:500, overflowY:"auto", boxShadow:"0 4px 20px #00000070" }}>
+        <div ref={charDropRef} style={{ position:"fixed", top: dropTop, left: charDropPos?.left ?? 0, zIndex:9999, background:"#ffffff", border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, minWidth:220, maxHeight, overflowY:"auto", boxShadow:"0 4px 20px rgba(0,0,0,0.15)" }}>
           {available.length === 0
-            ? <div style={{ padding:"8px 12px", fontSize:12, color:"var(--text4)", fontStyle:"italic", fontFamily:"sans-serif" }}>All characters added</div>
+            ? <div style={{ padding:"8px 12px", fontSize:12, color:"#888", fontStyle:"italic", fontFamily:"sans-serif" }}>All characters added</div>
             : <>
-                {grouped.map(g => (
-                  <div key={g.name}>
-                    <div
-                      style={{ padding:"6px 10px 2px", fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between" }}
-                      onMouseEnter={e => e.currentTarget.style.color="var(--text)"}
-                      onMouseLeave={e => e.currentTarget.style.color="var(--text4)"}
-                      onClick={() => g.chars.forEach(c => addChar(c))}>
-                      <span>{g.name}</span>
-                      <span style={{ fontSize:11, marginRight:2 }}>+</span>
+                {grouped.map(g => {
+                  const isOpen = !!openGroups[g.name];
+                  return (
+                    <div key={g.name}>
+                      <div
+                        style={{ padding:"6px 10px 4px", fontSize:12, color:"#888", fontFamily:"sans-serif", letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", userSelect:"none" }}
+                        onMouseEnter={e => e.currentTarget.style.color="#1a2a3a"}
+                        onMouseLeave={e => e.currentTarget.style.color="#888"}
+                        onClick={() => toggleGroup(g.name)}>
+                        <span>{isOpen ? "▾" : "›"} {g.name}</span>
+                        <span
+                          style={{ fontSize:11, marginRight:2, padding:"0 4px" }}
+                          onClick={e => { e.stopPropagation(); g.chars.forEach(c => addChar(c)); }}
+                          title="Add all">+</span>
+                      </div>
+                      {isOpen && g.chars.map(charRow)}
                     </div>
-                    {g.chars.map(charRow)}
-                  </div>
-                ))}
+                  );
+                })}
                 {ungrouped.length > 0 && (
                   <div>
-                    {grouped.length > 0 && <div style={{ padding:"6px 10px 2px", fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" }}>Other</div>}
+                    {grouped.length > 0 && <div style={{ padding:"6px 10px 2px", fontSize:12, color:"#888", fontFamily:"sans-serif", letterSpacing:"0.04em", textTransform:"uppercase" }}>Other</div>}
                     {ungrouped.map(charRow)}
                   </div>
                 )}
@@ -543,18 +733,11 @@ if (!pendingProse) return;
           {/* LEFT PANEL */}
           <LeftPanel
             leftPanelRef={leftPanelRef}
-            showLoc={showLoc}
-            setShowLoc={setShowLoc}
-            locStack={locStack}
-            setLocStack={setLocStack}
-            visibleLocs={visibleLocs}
             allLocs={allLocs}
             location={location}
             setLocation={setLocation}
             locationId={locationId}
             setLocationId={setLocationId}
-            showMode={showMode}
-            setShowMode={setShowMode}
             mode={mode}
             setMode={setMode}
             timeOfDay={timeOfDay}
@@ -569,13 +752,14 @@ if (!pendingProse) return;
             scenes={scenes}
             proseRef={proseRef}
             directiveRef={directiveRef}
+            onOpenImport={() => setImportOpen(true)}
           />
 
           {/* MAIN AREA */}
           <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden" }}>
 
             {/* PROSE AREA */}
-            <div ref={el => { proseRef.current = el; scrollContainerRef.current = el; }} style={{ flex:1, overflowY:"auto", padding:"24px 32px" }}>
+            <div ref={el => { proseRef.current = el; scrollContainerRef.current = el; }} style={{ flex:1, overflowY:"auto", padding:"24px 32px", background:"#ffffff" }}>
               {phase==="loading" && (
                 <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, padding:"48px 0", textAlign:"center", fontFamily:"sans-serif" }}>Loading…</div>
               )}
@@ -590,12 +774,12 @@ if (!pendingProse) return;
               )}
               {phase==="ready" && scenesWithBeats.map(({ scene, beats }) => (
                 <div key={scene.id} id={scene.id}>
-                  <h2 style={{ fontSize:14, color:"var(--gold)", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:16, marginTop:32, paddingBottom:8, borderBottom:"1px solid var(--border)" }}>
+                  <h2 style={{ fontSize:14, color:"#8B6914", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:16, marginTop:32, paddingBottom:8, borderBottom:"1px solid rgba(0,0,0,0.12)" }}>
                     {scene.sequence_number}. {scene.title}
                   </h2>
                   {beats.length === 0
                     ? <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>No beats for this scene yet.</div>
-                    : <div style={{ fontSize:16, lineHeight:2.0, color:"#ffffff", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
+                    : <div style={{ fontSize:20, lineHeight:2.0, color:"#1a2a3a", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
                         {beats.filter(b => b.prose_text).map((b, i, arr) => {
                           const prev = arr[i - 1];
                           const stateChanged = i > 0 && prev && (
@@ -606,12 +790,12 @@ if (!pendingProse) return;
                             b.snap_scene_mode !== prev.snap_scene_mode
                           );
                           return (
-                          <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(184,148,72,0.4)" : "2px solid transparent", borderBottom: "1px solid rgba(255,255,255,0.12)", paddingLeft: 10, paddingBottom: "2rem", marginBottom: "2rem", transition:"border-color 0.15s" }}>
+                          <div key={b.id} ref={el => { beatRefs.current[b.id] = el; }} data-beat-id={b.id} style={{ marginTop: i > 0 ? "1.5em" : 0, borderLeft: activeBeatId === b.id ? "2px solid rgba(139,105,20,0.5)" : "2px solid transparent", borderBottom: "1px solid rgba(0,0,0,0.08)", paddingLeft: 10, paddingBottom: "2rem", marginBottom: "2rem", transition:"border-color 0.15s" }}>
                             {stateChanged && (
                               <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-                                <div style={{ height:1, flex:1, background:"rgba(201,168,108,0.25)" }}/>
-                                <span style={{ fontSize:10, color:"var(--gold2)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", opacity:0.7, flexShrink:0 }}>scene shift</span>
-                                <div style={{ height:1, flex:1, background:"rgba(201,168,108,0.25)" }}/>
+                                <div style={{ height:1, flex:1, background:"rgba(0,0,0,0.12)" }}/>
+                                <span style={{ fontSize:10, color:"#8B6914", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", opacity:0.7, flexShrink:0 }}>scene shift</span>
+                                <div style={{ height:1, flex:1, background:"rgba(0,0,0,0.12)" }}/>
                               </div>
                             )}
                             {<span
@@ -627,12 +811,12 @@ if (!pendingProse) return;
                                   style={{ cursor:"text", display:"block" }}
                                   title="Double-click to edit"
                                 >
-                                  {b.prose_text}
+                                  {highlightNames(b.prose_text)}
                                 </span>
                             }
                             <div style={{ display:"flex", justifyContent:"flex-end" }}>
                               <button
-                                style={{ background:"none", border:"none", color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"2px 8px", opacity:0.4 }}
+                                style={{ background:"none", border:"none", color:"#999", fontSize:11, fontFamily:"sans-serif", cursor:"pointer", padding:"2px 8px", opacity:0.4 }}
                                 onMouseEnter={e => e.currentTarget.style.opacity = "1"}
                                 onMouseLeave={e => e.currentTarget.style.opacity = "0.4"}
                                 onClick={async e => {
@@ -672,16 +856,16 @@ if (!pendingProse) return;
                 </div>
               ))}
               {phase==="ready" && (generating || (pendingProse && pendingProse.sceneId === selSc)) && (
-                <div style={{ marginTop:32, borderTop:"1px solid var(--border)", paddingTop:24 }}>
+                <div ref={pendingProseRef} style={{ marginTop:32, borderTop:"1px solid rgba(0,0,0,0.12)", paddingTop:24 }}>
                   {generating && !pendingProse
-                    ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"var(--text4)", fontFamily:"sans-serif", fontSize:13, fontStyle:"italic" }}>
+                    ? <div style={{ display:"flex", alignItems:"center", gap:10, color:"#888", fontFamily:"sans-serif", fontSize:13, fontStyle:"italic" }}>
                         <span className="spin" /> Generating…
                       </div>
                     : <>
                         <textarea
                           value={pendingProse.prose}
                           onChange={e => setPendingProse(p => ({ ...p, prose: e.target.value }))}
-                          style={{ width:"100%", background:"var(--bg3)", color:"#c8c0b0", border:"1px solid var(--border2)", borderRadius:4, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"12px 16px", resize:"none", outline:"none", boxSizing:"border-box", minHeight:200 }}
+                          style={{ width:"100%", background:"#ffffff", color:"#1a2a3a", border:"1px solid var(--border2)", borderRadius:4, fontSize:20, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"12px 16px", resize:"none", outline:"none", boxSizing:"border-box", minHeight:200 }}
                           rows={Math.max(6, (pendingProse.prose.match(/\n/g)||[]).length + 3)}
                         />
                         <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
@@ -716,18 +900,57 @@ if (!pendingProse) return;
               generating={generating}
               taRef={taRef}
               directiveRef={directiveRef}
+              wordCount={scenesWithBeats.flatMap(({ beats }) => beats).reduce((n, b) => n + (b.prose_text?.trim() ? b.prose_text.trim().split(/\s+/).length : 0), 0)}
+              highlightNames={highlightNames}
             />
           </div>
         </div>
       </div>
       {charDropdown}
+      {processChapterOpen && selCh && (() => {
+        const ch = chapters.find(c => c.id === selCh);
+        return ch ? (
+          <ProcessChapterPanel
+            chapterId={ch.id}
+            chapterTitle={ch.title}
+            onClose={() => setProcessChapterOpen(false)}
+          />
+        ) : null;
+      })()}
+      {updateCodexOpen && selCh && (() => {
+        const ch = chapters.find(c => c.id === selCh);
+        return ch ? (
+          <UpdateCodexPanel
+            chapterId={ch.id}
+            chapterTitle={ch.title}
+            onClose={() => setUpdateCodexOpen(false)}
+          />
+        ) : null;
+      })()}
+      {importOpen && selCh && (() => {
+        const ch = chapters.find(c => c.id === selCh);
+        return ch ? (
+          <ImportPanel
+            chapterId={ch.id}
+            chapterTitle={ch.title}
+            onOpenCaptureEvents={() => setProcessChapterOpen(true)}
+            onOpenUpdateCodex={() => setUpdateCodexOpen(true)}
+            onStartNewChapter={handleStartNewChapter}
+            onSceneBreaksDone={async ({ chapter_title }) => {
+              setChapters(prev => prev.map(c => c.id === ch.id ? { ...c, title: chapter_title } : c));
+              await loadChapter({ id: ch.id, title: chapter_title });
+            }}
+            onClose={() => setImportOpen(false)}
+          />
+        ) : null;
+      })()}
       {editingBeatId && createPortal(
-        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,0,0,0.85)", display:"flex", flexDirection:"column", padding:"40px 60px" }}>
+        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,12,28,0.96)", display:"flex", flexDirection:"column", padding:"40px 60px" }}>
           <textarea
             value={editingText}
             onChange={e => setEditingText(e.target.value)}
             autoFocus
-            style={{ flex:1, width:"100%", background:"var(--bg3)", color:"#ffffff", border:"1px solid var(--gold2)", borderRadius:6, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"24px 32px", resize:"none", outline:"none" }}
+            style={{ flex:1, width:"100%", background:"#0d1b2e", color:"#c8e0ff", border:"1px solid #3b7fd4", borderRadius:6, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"24px 32px", resize:"none", outline:"none" }}
           />
           <div style={{ display:"flex", gap:12, marginTop:16, justifyContent:"flex-end" }}>
             <button

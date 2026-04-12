@@ -38,19 +38,19 @@ export const CSS = `
 `;
 
 export const selFull = {
-  width:"100%", background:"var(--bg4)", color:"var(--text)",
-  border:"1px solid var(--border2)", borderRadius:4,
+  width:"100%", background:"#ffffff", color:"#1a2a3a",
+  border:"1px solid rgba(0,0,0,0.18)", borderRadius:4,
   padding:"5px 24px 5px 8px", fontSize:12, fontFamily:"sans-serif", cursor:"pointer",
-  backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%237a6e62'/%3E%3C/svg%3E")`,
+  backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23888888'/%3E%3C/svg%3E")`,
   backgroundRepeat:"no-repeat", backgroundPosition:"right 7px center",
 };
 export const panelLbl = {
-  fontSize:10, color:"var(--text4)", fontFamily:"sans-serif",
+  fontSize:10, color:"#888", fontFamily:"sans-serif",
   letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:5, display:"block",
 };
 export const fullBtn = {
-  width:"100%", textAlign:"left", background:"var(--bg4)", color:"var(--text)",
-  border:"1px solid var(--border2)", borderRadius:4, padding:"5px 8px",
+  width:"100%", textAlign:"left", background:"#ffffff", color:"#1a2a3a",
+  border:"1px solid rgba(0,0,0,0.18)", borderRadius:4, padding:"5px 8px",
   fontSize:12, fontFamily:"sans-serif", cursor:"pointer", display:"flex",
   alignItems:"center", justifyContent:"space-between", gap:4,
 };
@@ -84,7 +84,7 @@ export const fetchBeats = async (sceneId) => {
 };
 export const fetchCharacters = async () => {
   const { data } = await supabase
-    .from("characters").select("id, name, portrait_url, character_group, character_groups(link_color)").order("name");
+    .from("characters").select("id, name, aliases, portrait_url, character_group, character_groups(link_color)").order("name");
   return (data || []).map(c => ({ ...c, link_color: c.character_groups?.link_color || "#7a6e62" }));
 };
 export const fetchGroups = async () => {
