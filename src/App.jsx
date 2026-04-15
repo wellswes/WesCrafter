@@ -253,7 +253,6 @@ function ProseViewer() {
   // beat. If no beat is active, union-add or remove the char from every beat in the current scene
   // so that clicking any beat later doesn't blow away the manual char change.
   const writeCharSnap = async (updatedIds, removedId = null) => {
-    console.log("writeCharSnap firing, targetBeatId:", activeBeatId, "updatedIds:", updatedIds);
     const targetBeatId = activeBeatId;
     if (targetBeatId) {
       await supabase.from("beats").update({
@@ -294,7 +293,6 @@ function ProseViewer() {
   };
 
   const addChar    = async c => {
-    console.log("addChar fired", c.id);
     if (sceneChars.find(x => x.id === c.id)) { setShowChar(false); return; }
     const updatedChars = [...sceneChars, c];
     setSceneChars(updatedChars);
