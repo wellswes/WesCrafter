@@ -63,6 +63,7 @@ function ProseViewer() {
     try { return JSON.parse(sessionStorage.getItem("pendingProse") || "null"); } catch { return null; }
   });
   const [uncertainChars, setUncertainChars] = useState({}); // { charId: true }
+  const [dismissedPills, setDismissedPills] = useState(new Set());
   const [editingBeatId,        setEditingBeatId]        = useState(null);
   const [editingText,          setEditingText]          = useState("");
   const [processChapterOpen,   setProcessChapterOpen]   = useState(false);
@@ -118,6 +119,56 @@ function ProseViewer() {
     if (last < text.length) parts.push(text.slice(last));
     return parts.length ? parts : text;
   }, [nameEntries]);
+
+  // ── Pill suggestions ─────────────────────────────────────────────────────
+  const TIME_KEYWORD_MAP = [
+    { keywords: ["dawn", "sunrise", "first light"], value: "Dawn" },
+    { keywords: ["morning", "good morning", "woke", "waking", "breakfast"], value: "Morning" },
+    { keywords: ["midday", "noon", "lunch"], value: "Noon" },
+    { keywords: ["afternoon"], value: "Afternoon" },
+    { keywords: ["dusk", "sunset"], value: "Evening" },
+    { keywords: ["evening", "supper"], value: "Evening" },
+    { keywords: ["night", "midnight", "dark", "late"], value: "Night" },
+  ];
+
+  const pillSuggestions = useMemo(() => {
+    if (!directive.trim()) return [];
+    const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wordMatch = (pattern, text) => {
+      try { return new RegExp(`\\b${esc(pattern)}\\b`, 'i').test(text); } catch { return false; }
+    };
+    const pills = [];
+
+    // Character pills — name/alias in directive but character not in portrait band
+    for (const char of allChars) {
+      if (sceneChars.find(c => c.id === char.id)) continue;
+      const terms = [char.name, ...(char.aliases || [])].filter(Boolean);
+      if (terms.some(t => wordMatch(t, directive))) {
+        pills.push({ type: 'char', id: char.id, label: char.name, char });
+      }
+    }
+
+    // Location pills — place name in directive but not current location
+    for (const loc of allLocs) {
+      if (loc.id === locationId) continue;
+      if (wordMatch(loc.name, directive)) {
+        pills.push({ type: 'loc', id: loc.id, label: loc.name, loc });
+      }
+    }
+
+    // Time pills — time keyword in directive but differs from current time of day
+    const addedTimes = new Set();
+    for (const { keywords, value } of TIME_KEYWORD_MAP) {
+      if (addedTimes.has(value)) continue;
+      if (value.toLowerCase() === timeOfDay.toLowerCase()) continue;
+      if (keywords.some(kw => wordMatch(kw, directive))) {
+        addedTimes.add(value);
+        pills.push({ type: 'time', id: `time:${value}`, label: value, value });
+      }
+    }
+
+    return pills.filter(p => !dismissedPills.has(p.id));
+  }, [directive, allChars, allLocs, sceneChars, locationId, timeOfDay, dismissedPills]);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -198,15 +249,13 @@ function ProseViewer() {
     }, { onConflict: "story_id" });
   };
 
-  const addChar    = c => { if (!sceneChars.find(x => x.id === c.id)) { setSceneChars(p => [...p, c]); } setShowChar(false); };
-  const removeChar = async id => {
-    const updatedChars = sceneChars.filter(c => c.id !== id);
-    setSceneChars(updatedChars);
-    setUncertainChars(p => { const n = { ...p }; delete n[id]; return n; });
-    saveSceneState(updatedChars.map(c => c.id));
+  // Write snap_active_character_ids to beats. If a specific beat is active, update only that
+  // beat. If no beat is active, union-add or remove the char from every beat in the current scene
+  // so that clicking any beat later doesn't blow away the manual char change.
+  const writeCharSnap = async (updatedIds, removedId = null) => {
+    console.log("writeCharSnap firing, targetBeatId:", activeBeatId, "updatedIds:", updatedIds);
     const targetBeatId = activeBeatId;
     if (targetBeatId) {
-      const updatedIds = updatedChars.map(c => c.id);
       await supabase.from("beats").update({
         snap_active_character_ids: updatedIds
       }).eq("id", targetBeatId);
@@ -216,7 +265,49 @@ function ProseViewer() {
           ? { ...b, snap_active_character_ids: updatedIds }
           : b)
       })));
+    } else if (selSc) {
+      const sceneBeats = scenesWithBeats.find(sw => sw.scene.id === selSc)?.beats ?? [];
+      if (sceneBeats.length) {
+        await Promise.all(sceneBeats.map(b => {
+          const existing = b.snap_active_character_ids ?? [];
+          const next = removedId
+            ? existing.filter(id => id !== removedId)
+            : existing.includes(updatedIds[updatedIds.length - 1])
+              ? existing
+              : [...existing, updatedIds[updatedIds.length - 1]];
+          return supabase.from("beats").update({ snap_active_character_ids: next }).eq("id", b.id);
+        }));
+        setScenesWithBeats(prev => prev.map(sw => sw.scene.id !== selSc ? sw : {
+          ...sw,
+          beats: sw.beats.map(b => {
+            const existing = b.snap_active_character_ids ?? [];
+            const next = removedId
+              ? existing.filter(id => id !== removedId)
+              : existing.includes(updatedIds[updatedIds.length - 1])
+                ? existing
+                : [...existing, updatedIds[updatedIds.length - 1]];
+            return { ...b, snap_active_character_ids: next };
+          })
+        }));
+      }
     }
+  };
+
+  const addChar    = async c => {
+    console.log("addChar fired", c.id);
+    if (sceneChars.find(x => x.id === c.id)) { setShowChar(false); return; }
+    const updatedChars = [...sceneChars, c];
+    setSceneChars(updatedChars);
+    setShowChar(false);
+    saveSceneState(updatedChars.map(ch => ch.id));
+    await writeCharSnap(updatedChars.map(ch => ch.id));
+  };
+  const removeChar = async id => {
+    const updatedChars = sceneChars.filter(c => c.id !== id);
+    setSceneChars(updatedChars);
+    setUncertainChars(p => { const n = { ...p }; delete n[id]; return n; });
+    saveSceneState(updatedChars.map(c => c.id));
+    await writeCharSnap(updatedChars.map(c => c.id), id);
   };
   const available  = allChars.filter(c => !sceneChars.find(x => x.id === c.id));
 
@@ -242,6 +333,26 @@ function ProseViewer() {
   const generate = async () => {
     if (!directive.trim() || generating) return;
     setGenerating(true);
+
+    // Apply pill suggestions — compute effective state before API call
+    let effectiveChars = [...sceneChars];
+    let effectiveLoc   = location;
+    let effectiveLocId = locationId;
+    let effectiveTime  = timeOfDay;
+    for (const pill of pillSuggestions) {
+      if (pill.type === 'char') {
+        if (!effectiveChars.find(c => c.id === pill.char.id)) effectiveChars.push(pill.char);
+      } else if (pill.type === 'loc') {
+        effectiveLoc   = pill.loc.name;
+        effectiveLocId = pill.loc.id;
+      } else if (pill.type === 'time') {
+        effectiveTime  = pill.value;
+      }
+    }
+    if (effectiveChars.length !== sceneChars.length) setSceneChars(effectiveChars);
+    if (effectiveLoc !== location) { setLocation(effectiveLoc); setLocationId(effectiveLocId); }
+    if (effectiveTime !== timeOfDay) setTimeOfDay(effectiveTime);
+
     try {
       // Last 4 scenes of prose context
       const last4 = scenesWithBeats.slice(-4);
@@ -273,9 +384,9 @@ function ProseViewer() {
       };
 
       // All parallel fetches
-      const charIds = sceneChars.map(c => c.id);
+      const charIds = effectiveChars.map(c => c.id);
       let charSel = "id, name, role, species, age, occupation, physical_appearance, personality, backstory_summary, gender, pronouns, voice_notes";
-      if (mode === "intimate") charSel += ", erotic_profile";
+      if (mode === "intimate") charSel += ", character_erotic(appearance_detail, intimacy_behavior, sensory_cues, unique_biology)";
       if (mode === "combat")   charSel += ", combat_profile";
 
       const [
@@ -288,7 +399,7 @@ function ProseViewer() {
       ] = await Promise.all([
         supabase.from("chapters").select("context_summary").eq("id", selCh).single(),
         supabase.from("app_settings").select("value").eq("key", `prompt_modifier_${mode}`).single(),
-        sceneChars.length
+        effectiveChars.length
           ? supabase.from("characters").select(charSel).in("id", charIds)
           : Promise.resolve({ data: null }),
         olderChapters.length
@@ -302,7 +413,14 @@ function ProseViewer() {
         fetchPrevChapterProse(),
       ]);
 
-      const sceneCharsWithData = charData || sceneChars;
+      const sceneCharsWithData = (charData || effectiveChars).map(c => {
+        const { character_erotic, ...rest } = c;
+        if (character_erotic) {
+          const erotic = Array.isArray(character_erotic) ? character_erotic[0] : character_erotic;
+          return erotic ? { ...rest, erotic } : rest;
+        }
+        return rest;
+      });
 
       // chapter summaries as objects so the edge function can label them by title
       const chapterSummaries = (olderChData || [])
@@ -325,8 +443,8 @@ function ProseViewer() {
           directive,
           proseContext,
           characters:            sceneCharsWithData,
-          location,
-          timeOfDay,
+          location:              effectiveLoc,
+          timeOfDay:             effectiveTime,
           sceneMode:             mode,
           chapterSummary:        chData?.context_summary || "",
           chapterSummaries,
@@ -338,7 +456,7 @@ function ProseViewer() {
       });
       const result = await response.json();
       if (result.error) throw new Error(result.error);
-      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, sceneState: result.scene_state || null, _key: Date.now() });
+      setPendingProse({ prose: result.prose || "", directive, sceneId: selSc, _key: Date.now() });
     } catch (e) {
       alert("Generation failed: " + e.message);
     } finally {
@@ -347,166 +465,23 @@ function ProseViewer() {
   };
 
   const acceptProse = async () => {
-if (!pendingProse) return;
-    const { prose, directive: beatDirective, sceneId, sceneState } = pendingProse;
+    if (!pendingProse) return;
+    const { prose, directive: beatDirective, sceneId } = pendingProse;
 
-    // Save beat — capture inserted id for snap update
     const currentSwb = scenesWithBeats.find(s => s.scene.id === sceneId);
     const maxSeq = currentSwb?.beats?.length
       ? Math.max(...currentSwb.beats.map(b => b.sequence_number))
       : 0;
-    const { data: inserted } = await supabase.from("beats").insert({
+    await supabase.from("beats").insert({
       scene_id:        sceneId,
       sequence_number: maxSeq + 1,
       type:            "moment",
       directive:       beatDirective,
       prose_text:      prose,
-    }).select("id").single();
-    const beatId = inserted?.id;
+    });
 
     const freshBeats = await fetchBeats(sceneId);
     setScenesWithBeats(prev => prev.map(s => s.scene.id === sceneId ? { ...s, beats: freshBeats } : s));
-
-    // Resolve post-update state values locally (setState is async — compute here for snap)
-    let snapLocationId  = locationId;
-    let snapLocation    = location;
-    let snapTimeOfDay   = timeOfDay;
-    let snapMode        = mode;
-    let snapChars       = [...sceneChars];
-
-    // Apply scene_state updates
-    if (sceneState) {
-      // Location
-      if (sceneState.location) {
-        if (sceneState.location === "[parent]") {
-          const currentPlace = allLocs.find(l => l.id === snapLocationId);
-          if (currentPlace?.parent_id) {
-            const parentPlace = allLocs.find(l => l.id === currentPlace.parent_id);
-            if (parentPlace) {
-              snapLocationId = parentPlace.id;
-              snapLocation   = parentPlace.name;
-              setLocation(parentPlace.name);
-              setLocationId(parentPlace.id);
-            }
-          }
-        } else {
-          const { data: matched } = await supabase
-            .from("places")
-            .select("id, name")
-            .ilike("name", sceneState.location)
-            .limit(1)
-            .single();
-          if (matched) {
-            snapLocationId = matched.id;
-            snapLocation   = matched.name;
-            setLocation(matched.name);
-            setLocationId(matched.id);
-          }
-        }
-      }
-      // Time of day
-      if (sceneState.time_of_day) {
-        snapTimeOfDay = sceneState.time_of_day;
-        setTimeOfDay(sceneState.time_of_day);
-      }
-      // Mode
-      if (sceneState.mode) {
-        snapMode = sceneState.mode;
-        setMode(sceneState.mode);
-      }
-      // Characters entered
-      if (sceneState.characters?.entered?.length) {
-        const additions = sceneState.characters.entered
-          .map(name => allChars.find(c => c.name.toLowerCase() === name.toLowerCase()))
-          .filter(c => c && !snapChars.find(p => p.id === c.id));
-        if (additions.length) {
-          snapChars = [...snapChars, ...additions];
-          setSceneChars(snapChars);
-        }
-      }
-      // POV character exit = location change, not a real exit
-      // If Zep (pov character) appears in exited list, walk location up
-      // one level in the hierarchy instead of removing him
-      const povChar = allChars.find(c => c.id === povCharacterId);
-      if (povChar && sceneState.characters?.exited?.length) {
-        const povExited = sceneState.characters.exited.find(
-          x => x.name.toLowerCase() === povChar.name.toLowerCase()
-        );
-        if (povExited) {
-          // Remove Zep from the exited list so he isn't processed below
-          sceneState.characters.exited = sceneState.characters.exited.filter(
-            x => x.name.toLowerCase() !== povChar.name.toLowerCase()
-          );
-          // Walk location up one level if no new location was specified
-          if (!sceneState.location && snapLocationId) {
-            const currentPlace = allLocs.find(l => l.id === snapLocationId);
-            if (currentPlace?.parent_id) {
-              const parentPlace = allLocs.find(l => l.id === currentPlace.parent_id);
-              if (parentPlace) {
-                snapLocationId = parentPlace.id;
-                snapLocation   = parentPlace.name;
-                setLocation(parentPlace.name);
-                setLocationId(parentPlace.id);
-              }
-            }
-          }
-        }
-      }
-
-      // Characters exited
-      if (sceneState.characters?.exited?.length) {
-        const clearExits  = sceneState.characters.exited.filter(x => x.confidence === "clear").map(x => x.name.toLowerCase());
-        const uncertainEx = sceneState.characters.exited.filter(x => x.confidence === "uncertain");
-        if (clearExits.length) {
-          snapChars = snapChars.filter(c => !clearExits.includes(c.name.toLowerCase()));
-          setSceneChars(snapChars);
-        }
-        if (uncertainEx.length) {
-          setUncertainChars(prev => {
-            const next = { ...prev };
-            uncertainEx.forEach(x => {
-              const match = snapChars.find(c => c.name.toLowerCase() === x.name.toLowerCase());
-              if (match) next[match.id] = true;
-            });
-            return next;
-          });
-        }
-      }
-    }
-
-    // Supplement snap chars with prose scan (first name + aliases support)
-    const proseAdds = allChars.filter(c =>
-      !snapChars.find(s => s.id === c.id) && charMatchesInProse(c, prose)
-    );
-    if (proseAdds.length) {
-      snapChars = [...snapChars, ...proseAdds];
-      setSceneChars(snapChars);
-    }
-
-    // Flush scene_state immediately (don't wait for debounce)
-    await supabase.from("scene_state").upsert({
-      story_id:             STORY_ID,
-      current_chapter_id:   selCh,
-      current_scene_id:     sceneId,
-      location_text:        snapLocation,
-      location_id:          snapLocationId,
-      time_of_day:          snapTimeOfDay,
-      scene_mode:           snapMode,
-      active_character_ids: snapChars.map(c => c.id),
-      pov_character_id:     povCharacterId,
-      updated_at:           new Date().toISOString(),
-    }, { onConflict: "story_id" });
-
-    // Stamp resolved snapshot onto the beat
-    if (beatId) {
-      await supabase.from("beats").update({
-        snap_location_id:          snapLocationId,
-        snap_time_of_day:          snapTimeOfDay,
-        snap_scene_mode:           snapMode,
-        snap_active_character_ids: snapChars.map(c => c.id),
-        snap_pov_character_id:     povCharacterId,
-      }).eq("id", beatId);
-    }
 
     setPendingProse(null);
     setDirective("");
@@ -566,7 +541,7 @@ if (!pendingProse) return;
   }, [pendingProse]);
   useEffect(() => {
     if (directive) sessionStorage.setItem("directive", directive);
-    else sessionStorage.removeItem("directive");
+    else { sessionStorage.removeItem("directive"); setDismissedPills(new Set()); }
   }, [directive]);
 
   // Scroll pending prose block into view only when new prose first arrives (not on every edit)
@@ -892,6 +867,30 @@ if (!pendingProse) return;
                 </div>
               )}
             </div>
+
+            {/* ── Pill suggestion strip ── */}
+            {pillSuggestions.length > 0 && (
+              <div style={{ flexShrink:0, padding:"3px 10px 2px", background:"#f0ece4", borderTop:"1px solid rgba(0,0,0,0.06)", display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
+                {pillSuggestions.map(pill => {
+                  const isChar = pill.type === 'char';
+                  const isLoc  = pill.type === 'loc';
+                  const bg     = isChar ? "rgba(139,105,20,0.08)"  : isLoc ? "rgba(90,122,106,0.08)"  : "rgba(60,90,130,0.08)";
+                  const bdr    = isChar ? "rgba(139,105,20,0.35)"  : isLoc ? "rgba(90,122,106,0.35)"  : "rgba(60,90,130,0.35)";
+                  const clr    = isChar ? "#8B6914"                : isLoc ? "#4a6a5a"                : "#3a5a80";
+                  const prefix = isChar ? "+"                      : isLoc ? "\u2192"                 : "\u25f7";
+                  return (
+                    <button
+                      key={pill.id}
+                      onClick={() => setDismissedPills(prev => new Set([...prev, pill.id]))}
+                      title="Click to dismiss"
+                      style={{ background:bg, border:`1px solid ${bdr}`, borderRadius:20, color:clr, fontSize:11, fontFamily:"sans-serif", padding:"2px 9px 2px 7px", cursor:"pointer", letterSpacing:"0.02em", lineHeight:1.5, flexShrink:0 }}
+                    >
+                      {prefix} {pill.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <WritePanel
               directive={directive}
