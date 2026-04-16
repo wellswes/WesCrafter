@@ -9,6 +9,8 @@ export const STORY_ID = "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3";
 export const WORLD_ID = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
 
 export const TIMES = ["Dawn","Morning","Noon","Afternoon","Evening","Night","Midnight"];
+export const WEATHERS = ["Clear","Cloudy","Rain","Storm","Snow","Fog"];
+export const SEASONS = ["Spring","Summer","Autumn","Winter"];
 export const MODES = [
   { key:"narrative", label:"Narrative", color:"#7a6e62" },
   { key:"intimate",  label:"Intimate",  color:"#D4537E" },
@@ -78,7 +80,7 @@ export const fetchScenes = async (chapterId) => {
 };
 export const fetchBeats = async (sceneId) => {
   const { data } = await supabase
-    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id")
+    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id, snap_weather, snap_season, outfit_tag")
     .eq("scene_id", sceneId).order("sequence_number", { ascending: true });
   return data || [];
 };

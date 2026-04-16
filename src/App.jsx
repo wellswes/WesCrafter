@@ -48,6 +48,9 @@ function ProseViewer() {
   const [location,        setLocation]        = useState("Thorncliff Manor");
   const [locationId,      setLocationId]      = useState(null);
   const [timeOfDay,       setTimeOfDay]       = useState("Evening");
+  const [weather,         setWeather]         = useState("");
+  const [season,          setSeason]          = useState("");
+  const [outfitTag,       setOutfitTag]       = useState("");
   const [mode,            setMode]            = useState("narrative");
   const [showLoc,         setShowLoc]         = useState(false);
   const [locStack,        setLocStack]        = useState([]);
@@ -121,6 +124,13 @@ function ProseViewer() {
   }, [nameEntries]);
 
   // ── Pill suggestions ─────────────────────────────────────────────────────
+  const OUTFIT_KEYWORD_MAP = [
+    { keywords: ["ready for bed", "goes to bed", "nightgown", "sleepwear"], tag: "sleepwear" },
+    { keywords: ["hits the road", "travel", "riding", "on the road"],       tag: "travel" },
+    { keywords: ["into town", "market", "village", "town"],                  tag: "town" },
+    { keywords: ["dressed up", "formal", "gown", "dressup"],                 tag: "dressup" },
+  ];
+
   const TIME_KEYWORD_MAP = [
     { keywords: ["dawn", "sunrise", "first light"], value: "Dawn" },
     { keywords: ["morning", "good morning", "woke", "waking", "breakfast"], value: "Morning" },
@@ -167,8 +177,20 @@ function ProseViewer() {
       }
     }
 
-    return pills.filter(p => !dismissedPills.has(p.id));
-  }, [directive, allChars, allLocs, sceneChars, locationId, timeOfDay, dismissedPills]);
+    // Outfit pills — keyword triggers for outfit_tag snap
+    const addedOutfits = new Set();
+    for (const { keywords, tag } of OUTFIT_KEYWORD_MAP) {
+      if (addedOutfits.has(tag)) continue;
+      if (keywords.some(kw => {
+        try { return new RegExp(`\\b${esc(kw)}\\b`, 'i').test(directive); } catch { return false; }
+      })) {
+        addedOutfits.add(tag);
+        pills.push({ type: 'outfit', id: `outfit:${tag}`, label: tag, tag });
+      }
+    }
+
+    return pills.filter(p => p.type === 'outfit' || !dismissedPills.has(p.id));
+  }, [directive, allChars, allLocs, sceneChars, locationId, timeOfDay, outfitTag, dismissedPills]);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -328,6 +350,49 @@ function ProseViewer() {
     return () => clearTimeout(timer);
   }, [selCh, selSc, location, locationId, timeOfDay, mode, sceneChars, povCharacterId]);
 
+  const createBlankBeat = async () => {
+    if (!selSc) return;
+    const currentSwb = scenesWithBeats.find(sw => sw.scene.id === selSc);
+    if (!currentSwb) return;
+    const beats = currentSwb.beats;
+
+    const sourceBeat = activeBeatId
+      ? beats.find(b => b.id === activeBeatId)
+      : beats.length > 0 ? beats[beats.length - 1] : null;
+
+    const insertAfterSeq = sourceBeat ? sourceBeat.sequence_number : 0;
+
+    const beatsAfter = beats
+      .filter(b => b.sequence_number > insertAfterSeq)
+      .sort((a, b) => b.sequence_number - a.sequence_number);
+    for (const b of beatsAfter) {
+      await supabase.from("beats").update({ sequence_number: b.sequence_number + 1 }).eq("id", b.id);
+    }
+
+    const existingIds = new Set(beats.map(b => b.id));
+    const { error } = await supabase.from("beats").insert({
+      scene_id: selSc,
+      sequence_number: insertAfterSeq + 1,
+      type: "moment",
+      directive: "",
+      prose_text: "",
+      snap_location_id:          sourceBeat?.snap_location_id ?? locationId,
+      snap_time_of_day:          sourceBeat?.snap_time_of_day ?? timeOfDay,
+      snap_weather:              sourceBeat?.snap_weather ?? (weather || null),
+      snap_season:               sourceBeat?.snap_season ?? (season || null),
+      outfit_tag:           sourceBeat?.outfit_tag ?? (outfitTag || null),
+      snap_scene_mode:           sourceBeat?.snap_scene_mode ?? mode,
+      snap_active_character_ids: sourceBeat?.snap_active_character_ids ?? sceneChars.map(c => c.id),
+      snap_pov_character_id:     sourceBeat?.snap_pov_character_id ?? povCharacterId,
+    });
+    if (error) { console.error("createBlankBeat error:", error); return; }
+
+    const freshBeats = await fetchBeats(selSc);
+    setScenesWithBeats(prev => prev.map(sw => sw.scene.id === selSc ? { ...sw, beats: freshBeats } : sw));
+    const newBeat = freshBeats.find(b => !existingIds.has(b.id));
+    if (newBeat) { setEditingBeatId(newBeat.id); setEditingText(""); }
+  };
+
   const generate = async () => {
     if (!directive.trim() || generating) return;
     setGenerating(true);
@@ -450,6 +515,8 @@ function ProseViewer() {
           relationships:         enrichedRelationships,
           promptModifier:        pmData?.value || "",
           povCharacterName:      allChars.find(c => c.id === povCharacterId)?.name || "Zep",
+          outfitTag:             outfitTag || null,
+          activeCharacterIds:    effectiveChars.map(c => c.id),
         }),
       });
       const result = await response.json();
@@ -571,6 +638,9 @@ function ProseViewer() {
       if (loc) { setLocation(loc.name); setLocationId(loc.id); }
     }
     if (beat.snap_time_of_day) setTimeOfDay(beat.snap_time_of_day);
+    if (beat.snap_weather)     setWeather(beat.snap_weather);
+    if (beat.snap_season)      setSeason(beat.snap_season);
+    if (beat.outfit_tag)  setOutfitTag(beat.outfit_tag);
     if (beat.snap_scene_mode)  setMode(beat.snap_scene_mode);
     setPovCharacterId(beat.snap_pov_character_id ?? null);
   };
@@ -586,6 +656,9 @@ function ProseViewer() {
     const snapUpdate = {
       snap_location_id:          locationId,
       snap_time_of_day:          timeOfDay,
+      snap_weather:              weather || null,
+      snap_season:               season || null,
+      outfit_tag:           outfitTag || null,
       snap_scene_mode:           mode,
       snap_active_character_ids: sceneChars.map(c => c.id),
       snap_pov_character_id:     povCharacterId,
@@ -596,7 +669,7 @@ function ProseViewer() {
       ...sw,
       beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, ...snapUpdate } : b),
     })));
-  }, [activeBeatId, sceneChars, locationId, timeOfDay, mode, povCharacterId, charPositions]);
+  }, [activeBeatId, sceneChars, locationId, timeOfDay, weather, season, outfitTag, mode, povCharacterId, charPositions]);
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
   const visibleLocs = allLocs
@@ -715,6 +788,10 @@ function ProseViewer() {
             setMode={setMode}
             timeOfDay={timeOfDay}
             setTimeOfDay={setTimeOfDay}
+            weather={weather}
+            setWeather={setWeather}
+            season={season}
+            setSeason={setSeason}
             chapters={chapters}
             selCh={selCh}
             selSc={selSc}
@@ -760,6 +837,9 @@ function ProseViewer() {
                             JSON.stringify(prev.snap_active_character_ids?.slice().sort()) ||
                             b.snap_location_id !== prev.snap_location_id ||
                             b.snap_time_of_day !== prev.snap_time_of_day ||
+                            b.snap_weather !== prev.snap_weather ||
+                            b.snap_season !== prev.snap_season ||
+                            b.outfit_tag !== prev.outfit_tag ||
                             b.snap_scene_mode !== prev.snap_scene_mode
                           );
                           return (
@@ -809,6 +889,9 @@ function ProseViewer() {
                                     prose_text: "",
                                     snap_location_id: b.snap_location_id,
                                     snap_time_of_day: b.snap_time_of_day,
+                                    snap_weather: b.snap_weather,
+                                    snap_season: b.snap_season,
+                                    outfit_tag: b.outfit_tag,
                                     snap_scene_mode: b.snap_scene_mode,
                                     snap_active_character_ids: b.snap_active_character_ids,
                                     snap_pov_character_id: b.snap_pov_character_id,
@@ -843,21 +926,16 @@ function ProseViewer() {
                         />
                         <div style={{ display:"flex", gap:10, marginTop:20, justifyContent:"flex-end" }}>
                           <button
+                            disabled={generating}
+                            onClick={acceptProse}
+                            autoFocus
+                            style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
+                            Accept
+                          </button>
+                          <button
                             onClick={() => setPendingProse(null)}
                             style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
                             Discard
-                          </button>
-                          <button
-                            disabled={generating}
-                            onClick={generate}
-                            style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text3)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor: generating ? "not-allowed" : "pointer", opacity: generating ? 0.5 : 1 }}>
-                            Regenerate
-                          </button>
-                          <button
-                            disabled={generating}
-                            onClick={acceptProse}
-                            style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor: generating ? "not-allowed" : "pointer", fontWeight:"bold", opacity: generating ? 0.5 : 1 }}>
-                            Accept
                           </button>
                         </div>
                       </>
@@ -870,6 +948,19 @@ function ProseViewer() {
             {pillSuggestions.length > 0 && (
               <div style={{ flexShrink:0, padding:"3px 10px 2px", background:"#f0ece4", borderTop:"1px solid rgba(0,0,0,0.06)", display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
                 {pillSuggestions.map(pill => {
+                  if (pill.type === 'outfit') {
+                    const isActive = outfitTag === pill.tag;
+                    return (
+                      <button
+                        key={pill.id}
+                        onClick={() => setOutfitTag(isActive ? "" : pill.tag)}
+                        title={isActive ? "Click to clear outfit tag" : "Click to set outfit tag"}
+                        style={{ background: isActive ? "rgba(100,70,140,0.15)" : "rgba(100,70,140,0.06)", border:`1px solid rgba(100,70,140,${isActive ? "0.55" : "0.28"})`, borderRadius:20, color: isActive ? "#7040a0" : "#8a60b0", fontSize:11, fontFamily:"sans-serif", padding:"2px 9px 2px 7px", cursor:"pointer", letterSpacing:"0.02em", lineHeight:1.5, flexShrink:0, fontWeight: isActive ? 600 : 400 }}
+                      >
+                        {isActive ? "\u2713" : "\u29bf"} {pill.label}
+                      </button>
+                    );
+                  }
                   const isChar = pill.type === 'char';
                   const isLoc  = pill.type === 'loc';
                   const bg     = isChar ? "rgba(139,105,20,0.08)"  : isLoc ? "rgba(90,122,106,0.08)"  : "rgba(60,90,130,0.08)";
@@ -895,6 +986,7 @@ function ProseViewer() {
               setDirective={setDirective}
               generate={generate}
               generating={generating}
+              createBlankBeat={createBlankBeat}
               taRef={taRef}
               directiveRef={directiveRef}
               wordCount={scenesWithBeats.flatMap(({ beats }) => beats).reduce((n, b) => n + (b.prose_text?.trim() ? b.prose_text.trim().split(/\s+/).length : 0), 0)}

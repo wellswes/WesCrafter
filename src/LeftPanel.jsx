@@ -1,7 +1,47 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { TIMES, MODES, selFull, fetchScenes } from "./constants.js";
+import { TIMES, MODES, WEATHERS, SEASONS, selFull, fetchScenes } from "./constants.js";
+
+function Combobox({ value, onChange, suggestions, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = e => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [open]);
+
+  const filtered = suggestions.filter(s => s.toLowerCase().includes(value.toLowerCase()));
+
+  return (
+    <div ref={rootRef} style={{ position:"relative" }}>
+      <input
+        type="text"
+        value={value}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={e => { onChange(e.target.value); setOpen(true); }}
+        style={{ width:"100%", background:"#ffffff", color:"#1a2a3a", border:"1px solid rgba(0,0,0,0.18)", borderRadius:4, padding:"5px 8px", fontSize:12, fontFamily:"sans-serif", boxSizing:"border-box", outline:"none" }}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{ position:"absolute", top:"calc(100% + 2px)", left:0, right:0, zIndex:9999, background:"#ffffff", border:"1px solid rgba(0,0,0,0.15)", borderRadius:4, boxShadow:"0 4px 12px rgba(0,0,0,0.12)", overflow:"hidden" }}>
+          {filtered.map(s => (
+            <div key={s}
+              style={{ padding:"5px 8px", fontSize:12, fontFamily:"sans-serif", color:"#1a2a3a", cursor:"pointer" }}
+              onMouseEnter={e => e.currentTarget.style.background="rgba(0,0,0,0.05)"}
+              onMouseLeave={e => e.currentTarget.style.background="transparent"}
+              onMouseDown={e => { e.preventDefault(); onChange(s); setOpen(false); }}>
+              {s}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function LocItem({ loc, allLocs, collapsedGroups, toggleGroup, onSelect, depth = 0 }) {
   const children = allLocs.filter(l => l.parent_id === loc.id);
@@ -46,7 +86,8 @@ function LocItem({ loc, allLocs, collapsedGroups, toggleGroup, onSelect, depth =
 export default function LeftPanel({
   leftPanelRef, allLocs,
   location, setLocation, locationId, setLocationId,
-  mode, setMode, timeOfDay, setTimeOfDay, chapters, selCh, selSc,
+  mode, setMode, timeOfDay, setTimeOfDay, weather, setWeather, season, setSeason,
+  chapters, selCh, selSc,
   phase, charRef, openCharDrop, loadChapter, scenes, proseRef, directiveRef,
   onOpenImport,
 }) {
@@ -160,6 +201,16 @@ export default function LeftPanel({
         <select style={{ ...selFull, color:"#1a2a3a" }} value={timeOfDay} onChange={e => setTimeOfDay(e.target.value)}>
           {TIMES.map(t => <option key={t} value={t} style={{ background:"#ffffff", color:"#000000" }}>{t}</option>)}
         </select>
+      </div>
+
+      {/* weather */}
+      <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid rgba(0,0,0,0.12)" }}>
+        <Combobox value={weather} onChange={setWeather} suggestions={WEATHERS} placeholder="Weather…" />
+      </div>
+
+      {/* season */}
+      <div style={{ padding:"8px", flexShrink:0, borderBottom:"1px solid rgba(0,0,0,0.12)" }}>
+        <Combobox value={season} onChange={setSeason} suggestions={SEASONS} placeholder="Season…" />
       </div>
 
       {/* narrative mode */}

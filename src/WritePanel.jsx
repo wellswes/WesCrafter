@@ -1,6 +1,6 @@
 const TEXT = { fontSize:13, fontFamily:"sans-serif", lineHeight:1.6, padding:"6px 10px", textAlign:"left" };
 
-export default function WritePanel({ directive, setDirective, generate, generating, taRef, directiveRef, wordCount }) {
+export default function WritePanel({ directive, setDirective, generate, generating, createBlankBeat, taRef, directiveRef, wordCount }) {
   return (
     <div style={{ flexShrink:0, background:"#f0ece4", borderTop:"1px solid rgba(0,0,0,0.12)", padding:"4px 8px", display:"flex", gap:8, alignItems:"flex-end" }}>
 
@@ -38,12 +38,20 @@ export default function WritePanel({ directive, setDirective, generate, generati
         />
       </div>
 
-      <button
-        onClick={generate}
-        disabled={!directive.trim() || generating}
-        style={{ flexShrink:0, background: directive.trim() && !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${directive.trim() && !generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: directive.trim() && !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: directive.trim() && !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-        {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
-      </button>
+      {directive.trim() ? (
+        <button
+          onClick={generate}
+          disabled={generating}
+          style={{ flexShrink:0, background: !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${!generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+          {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
+        </button>
+      ) : (
+        <button
+          onClick={createBlankBeat}
+          style={{ flexShrink:0, background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor:"pointer", minWidth:80 }}>
+          Create Beat
+        </button>
+      )}
 
       {wordCount > 0 && (
         <span style={{ flexShrink:0, fontSize:10, fontFamily:"sans-serif", color:"#8a7a6a", letterSpacing:"0.03em", alignSelf:"center" }}>
