@@ -1,4 +1,31 @@
-export default function PortraitBand({ sceneChars, charPositions, setCharPositions, selectedCharId, setSelectedCharId, povCharacterId, setPovCharacterId, uncertainChars, removeChar, bandRef }) {
+import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
+
+export default function PortraitBand({
+  sceneChars, charPositions, setCharPositions, selectedCharId, setSelectedCharId,
+  povCharacterId, setPovCharacterId, uncertainChars, removeChar, bandRef,
+  wardrobeMap, snapOutfitTags, onOutfitTagToggle,
+}) {
+  const [hoverCharId, setHoverCharId] = useState(null);
+  const [menuPos,     setMenuPos]     = useState({ x: 0, y: 0 });
+  const hoverTimerRef = useRef(null);
+
+  useEffect(() => () => clearTimeout(hoverTimerRef.current), []);
+
+  const scheduleOpen = (charId, rect) => {
+    clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      setHoverCharId(charId);
+      setMenuPos({ x: rect.left, y: rect.bottom + 4 });
+    }, 120);
+  };
+
+  const scheduleClose = () => {
+    hoverTimerRef.current = setTimeout(() => setHoverCharId(null), 150);
+  };
+
+  const cancelClose = () => clearTimeout(hoverTimerRef.current);
+
   return (
     <div ref={bandRef} style={{ height:240, flexShrink:0, borderBottom:"1px solid var(--border)", position:"relative", padding:0, margin:0, overflow:"hidden", backgroundImage:`url("https://gjvegoinppbpfusttycs.supabase.co/storage/v1/object/public/Wescrafter%20Images/safeharbor_bg_silver_anchor_evening.png")`, backgroundSize:"cover", backgroundPosition:"center", backgroundRepeat:"no-repeat" }}>
       {sceneChars.length === 0 ? (
@@ -22,9 +49,13 @@ export default function PortraitBand({ sceneChars, charPositions, setCharPositio
               onTouchStart={() => { longPressTimer = setTimeout(togglePov, 500); }}
               onTouchEnd={() => clearTimeout(longPressTimer)}
               onTouchMove={() => clearTimeout(longPressTimer)}
+              onMouseEnter={e => scheduleOpen(c.id, e.currentTarget.getBoundingClientRect())}
+              onMouseLeave={scheduleClose}
               onMouseDown={e => {
                 if (e.button !== 0) return;
                 e.preventDefault();
+                clearTimeout(hoverTimerRef.current);
+                setHoverCharId(null);
                 const startX = e.clientX;
                 const startY = e.clientY;
                 const startPos = charPositions[c.id] ?? { x: defaultX, y: 0, z: idx, scale: 1.0 };
@@ -61,6 +92,71 @@ export default function PortraitBand({ sceneChars, charPositions, setCharPositio
           );
         })
       )}
+
+      {hoverCharId && createPortal(
+        <OutfitMenu
+          charId={hoverCharId}
+          pos={menuPos}
+          wardrobeMap={wardrobeMap}
+          charTags={(snapOutfitTags || {})[hoverCharId] || []}
+          onToggle={(shortcode) => onOutfitTagToggle(hoverCharId, shortcode)}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+        />,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function OutfitMenu({ charId, pos, wardrobeMap, charTags, onToggle, onMouseEnter, onMouseLeave }) {
+  const items = wardrobeMap[charId] || [];
+
+  return (
+    <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      style={{
+        position: "fixed", top: pos.y, left: pos.x, zIndex: 9999,
+        background: "var(--bg2)", border: "1px solid var(--border2)",
+        borderRadius: 6, boxShadow: "0 4px 20px #00000070",
+        minWidth: 160, maxHeight: 280, overflowY: "auto", padding: "4px 0",
+        userSelect: "none",
+      }}
+    >
+      {items.map(item => {
+        const checked = charTags.includes(item.prompt_shortcode);
+        return (
+          <MenuItem key={item.id} checked={checked} label={item.name} onToggle={() => onToggle(item.prompt_shortcode)} />
+        );
+      })}
+    </div>
+  );
+}
+
+function MenuItem({ checked, label, italic, gold, onToggle }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onClick={onToggle}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        padding: "6px 10px", display: "flex", alignItems: "center", gap: 8,
+        cursor: "pointer", fontSize: 12,
+        color: gold ? "var(--gold)" : "var(--text)",
+        fontFamily: "sans-serif", fontStyle: italic ? "italic" : "normal",
+        background: hover ? "var(--bg4)" : "transparent",
+      }}
+    >
+      <span style={{
+        width: 13, height: 13, border: "1px solid var(--border2)", borderRadius: 2,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        flexShrink: 0, background: checked ? "var(--gold)" : "transparent",
+      }}>
+        {checked && <span style={{ color: "#1a1410", fontSize: 9, lineHeight: 1, fontWeight: "bold" }}>✓</span>}
+      </span>
+      {label}
     </div>
   );
 }

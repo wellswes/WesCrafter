@@ -8,6 +8,7 @@ import PortraitBand from "./PortraitBand.jsx";
 import WritePanel from "./WritePanel.jsx";
 import LeftPanel from "./LeftPanel.jsx";
 import StoryMap from "./StoryMap.jsx";
+import ArcPlanner from "./ArcPlanner.jsx";
 import ProcessChapterPanel from "./ProcessChapterPanel.jsx";
 import UpdateCodexPanel from "./UpdateCodexPanel.jsx";
 import ImportPanel from "./ImportPanel.jsx";
@@ -50,13 +51,12 @@ function ProseViewer() {
   const [timeOfDay,       setTimeOfDay]       = useState("Evening");
   const [weather,         setWeather]         = useState("");
   const [season,          setSeason]          = useState("");
-  const [outfitTag,       setOutfitTag]       = useState("");
+  const [snapOutfitTags,  setSnapOutfitTags]  = useState({});
+  const [wardrobeMap,     setWardrobeMap]     = useState({});
   const [mode,            setMode]            = useState("narrative");
   const [showLoc,         setShowLoc]         = useState(false);
   const [locStack,        setLocStack]        = useState([]);
   const [showMode,        setShowMode]        = useState(false);
-  const [showChar,        setShowChar]        = useState(false);
-  const [charDropPos,     setCharDropPos]     = useState(null);
   const [povCharacterId, setPovCharacterId] = useState(null);
   const [charPositions,   setCharPositions]   = useState({}); // { [charId]: { x, y, z, scale } }
   const [selectedCharId,  setSelectedCharId]  = useState(null);
@@ -72,11 +72,14 @@ function ProseViewer() {
   const [processChapterOpen,   setProcessChapterOpen]   = useState(false);
   const [updateCodexOpen,      setUpdateCodexOpen]      = useState(false);
   const [importOpen,           setImportOpen]           = useState(false);
+  const [planOpen,             setPlanOpen]             = useState(false);
+  const [planDraft,            setPlanDraft]            = useState("");
+  const [planPos,              setPlanPos]              = useState({ x: 440, y: 80 });
+  const planDragRef  = useRef(null);
+  const planPanelRef = useRef(null);
   const [activeBeatId,   setActiveBeatId]   = useState(null);
   const prevActiveBeatIdRef = useRef(null);
   const leftPanelRef  = useRef(null);
-  const charRef       = useRef(null);
-  const charDropRef   = useRef(null);
   const taRef         = useRef(null);
   const directiveRef  = useRef(null);
   const proseRef      = useRef(null);
@@ -190,7 +193,7 @@ function ProseViewer() {
     }
 
     return pills.filter(p => p.type === 'outfit' || !dismissedPills.has(p.id));
-  }, [directive, allChars, allLocs, sceneChars, locationId, timeOfDay, outfitTag, dismissedPills]);
+  }, [directive, allChars, allLocs, sceneChars, locationId, timeOfDay, snapOutfitTags, dismissedPills]);
 
   // close loc/char dropdowns on outside click
   useEffect(() => {
@@ -198,12 +201,34 @@ function ProseViewer() {
       if (leftPanelRef.current && !leftPanelRef.current.contains(e.target)) {
         setShowLoc(false); setLocStack([]);
       }
-      if (charRef.current && !charRef.current.contains(e.target) &&
-          charDropRef.current && !charDropRef.current.contains(e.target)) setShowChar(false);
     };
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  // Apply saved size directly to DOM so React's style prop doesn't overwrite resize-handle changes
+  useEffect(() => {
+    if (!planOpen || !planPanelRef.current) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem("planPopupLayout") || "null");
+      planPanelRef.current.style.width  = (saved?.width  ?? 600) + "px";
+      planPanelRef.current.style.height = (saved?.height ?? 320) + "px";
+    } catch {
+      planPanelRef.current.style.width  = "600px";
+      planPanelRef.current.style.height = "320px";
+    }
+  }, [planOpen]);
+
+  const closePlan = () => {
+    if (planPanelRef.current) {
+      localStorage.setItem("planPopupLayout", JSON.stringify({
+        x: planPos.x, y: planPos.y,
+        width:  planPanelRef.current.offsetWidth,
+        height: planPanelRef.current.offsetHeight,
+      }));
+    }
+    setPlanOpen(false);
+  };
 
   const loadChapter = useCallback(async (ch, targetSceneId = null) => {
     setSelCh(ch.id); setSelSc(null);
@@ -315,10 +340,9 @@ function ProseViewer() {
   };
 
   const addChar    = async c => {
-    if (sceneChars.find(x => x.id === c.id)) { setShowChar(false); return; }
+    if (sceneChars.find(x => x.id === c.id)) return;
     const updatedChars = [...sceneChars, c];
     setSceneChars(updatedChars);
-    setShowChar(false);
     saveSceneState(updatedChars.map(ch => ch.id));
     await writeCharSnap(updatedChars.map(ch => ch.id));
   };
@@ -380,7 +404,7 @@ function ProseViewer() {
       snap_time_of_day:          sourceBeat?.snap_time_of_day ?? timeOfDay,
       snap_weather:              sourceBeat?.snap_weather ?? (weather || null),
       snap_season:               sourceBeat?.snap_season ?? (season || null),
-      outfit_tag:           sourceBeat?.outfit_tag ?? (outfitTag || null),
+      snap_outfit_tags:          sourceBeat?.snap_outfit_tags ?? (Object.values(snapOutfitTags).some(t => t.length) ? snapOutfitTags : null),
       snap_scene_mode:           sourceBeat?.snap_scene_mode ?? mode,
       snap_active_character_ids: sourceBeat?.snap_active_character_ids ?? sceneChars.map(c => c.id),
       snap_pov_character_id:     sourceBeat?.snap_pov_character_id ?? povCharacterId,
@@ -515,8 +539,14 @@ function ProseViewer() {
           relationships:         enrichedRelationships,
           promptModifier:        pmData?.value || "",
           povCharacterName:      allChars.find(c => c.id === povCharacterId)?.name || "Zep",
-          outfitTag:             outfitTag || null,
-          activeCharacterIds:    effectiveChars.map(c => c.id),
+          outfitTags:            (() => {
+            const map = {};
+            for (const c of effectiveChars) {
+              const tags = snapOutfitTags[c.id];
+              if (tags && tags.length > 0) map[c.id] = tags;
+            }
+            return Object.keys(map).length ? map : null;
+          })(),
         }),
       });
       const result = await response.json();
@@ -596,6 +626,38 @@ function ProseViewer() {
     await loadChapter(ch);
   };
 
+  const handleOutfitTagToggle = (charId, shortcode) => {
+    setSnapOutfitTags(prev => {
+      const current = prev[charId] || [];
+      const next = current.includes(shortcode)
+        ? current.filter(t => t !== shortcode)
+        : [...current, shortcode];
+      return { ...prev, [charId]: next };
+    });
+  };
+
+  const handleWeatherChange = (v) => {
+    setWeather(v);
+    if (activeBeatId) {
+      supabase.from("beats").update({ snap_weather: v || null }).eq("id", activeBeatId);
+      setScenesWithBeats(prev => prev.map(sw => ({
+        ...sw,
+        beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, snap_weather: v || null } : b),
+      })));
+    }
+  };
+
+  const handleSeasonChange = (v) => {
+    setSeason(v);
+    if (activeBeatId) {
+      supabase.from("beats").update({ snap_season: v || null }).eq("id", activeBeatId);
+      setScenesWithBeats(prev => prev.map(sw => ({
+        ...sw,
+        beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, snap_season: v || null } : b),
+      })));
+    }
+  };
+
   // Clear active beat when scene changes
   useEffect(() => { setActiveBeatId(null); }, [selSc]);
 
@@ -622,11 +684,35 @@ function ProseViewer() {
     });
   }, [sceneChars]);
 
+  // Fetch wardrobe items (prompt_shortcode only) for active characters
+  useEffect(() => {
+    const charIds = sceneChars.map(c => c.id);
+    if (!charIds.length) { setWardrobeMap({}); return; }
+    (async () => {
+      const { data: ctrs } = await supabase
+        .from("containers").select("id, character_id").in("character_id", charIds);
+      if (!ctrs?.length) { setWardrobeMap({}); return; }
+      const { data: rawItems } = await supabase
+        .from("items").select("id, name, prompt_shortcode, container_id")
+        .in("container_id", ctrs.map(c => c.id)).not("prompt_shortcode", "is", null);
+      const ctrToChar = Object.fromEntries(ctrs.map(c => [c.id, c.character_id]));
+      const map = {};
+      for (const item of rawItems || []) {
+        const charId = ctrToChar[item.container_id];
+        if (!charId) continue;
+        (map[charId] ??= []).push({ id: item.id, name: item.name, prompt_shortcode: item.prompt_shortcode });
+      }
+      setWardrobeMap(map);
+    })();
+  }, [sceneChars]);
+
   // Load snap state from a beat into the UI
   const loadBeatSnap = (beat) => {
+    console.log("loadBeatSnap beat:", beat.id, "snap_active_character_ids:", beat.snap_active_character_ids);
     const hasSnap = beat.snap_location_id || beat.snap_time_of_day ||
                     beat.snap_scene_mode || beat.snap_active_character_ids?.length ||
-                    beat.snap_pov_character_id;
+                    beat.snap_pov_character_id ||
+                    (beat.snap_outfit_tags && Object.keys(beat.snap_outfit_tags).length);
     if (!hasSnap) return;
     if (beat.snap_active_character_ids?.length) {
       const chars = beat.snap_active_character_ids.map(id => allChars.find(c => c.id === id)).filter(Boolean);
@@ -640,7 +726,7 @@ function ProseViewer() {
     if (beat.snap_time_of_day) setTimeOfDay(beat.snap_time_of_day);
     if (beat.snap_weather)     setWeather(beat.snap_weather);
     if (beat.snap_season)      setSeason(beat.snap_season);
-    if (beat.outfit_tag)  setOutfitTag(beat.outfit_tag);
+    setSnapOutfitTags(beat.snap_outfit_tags || {});
     if (beat.snap_scene_mode)  setMode(beat.snap_scene_mode);
     setPovCharacterId(beat.snap_pov_character_id ?? null);
   };
@@ -653,12 +739,13 @@ function ProseViewer() {
     const beatJustChanged = activeBeatId !== prevActiveBeatIdRef.current;
     prevActiveBeatIdRef.current = activeBeatId;
     if (beatJustChanged) return;
+    if (sceneChars.length === 0) return;
     const snapUpdate = {
       snap_location_id:          locationId,
       snap_time_of_day:          timeOfDay,
       snap_weather:              weather || null,
       snap_season:               season || null,
-      outfit_tag:           outfitTag || null,
+      snap_outfit_tags:          Object.values(snapOutfitTags).some(t => t.length) ? snapOutfitTags : null,
       snap_scene_mode:           mode,
       snap_active_character_ids: sceneChars.map(c => c.id),
       snap_pov_character_id:     povCharacterId,
@@ -669,90 +756,13 @@ function ProseViewer() {
       ...sw,
       beats: sw.beats.map(b => b.id === activeBeatId ? { ...b, ...snapUpdate } : b),
     })));
-  }, [activeBeatId, sceneChars, locationId, timeOfDay, weather, season, outfitTag, mode, povCharacterId, charPositions]);
+  }, [activeBeatId, sceneChars, locationId, timeOfDay, weather, season, snapOutfitTags, mode, povCharacterId, charPositions]);
 
   const currentParentId = locStack.length ? locStack[locStack.length - 1] : null;
   const visibleLocs = allLocs
     .filter(l => (l.parent_id ?? null) === currentParentId)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const openCharDrop = e => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setCharDropPos({ top: r.bottom + 4, left: r.left });
-    setShowChar(p => !p);
-  };
-
-  const [openGroups, setOpenGroups] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("charDropOpenGroups") || "{}"); } catch { return {}; }
-  });
-  const toggleGroup = name => setOpenGroups(prev => {
-    const next = { ...prev, [name]: !prev[name] };
-    localStorage.setItem("charDropOpenGroups", JSON.stringify(next));
-    return next;
-  });
-
-  const charDropdown = showChar ? createPortal(
-    (() => {
-      const groupNames = new Set(allGroups.map(g => g.name));
-      const grouped = allGroups
-        .map(g => ({ name: g.name, chars: available.filter(c => c.character_group === g.name) }))
-        .filter(g => g.chars.length > 0);
-      const ungrouped = available.filter(c => !groupNames.has(c.character_group));
-      const charRow = c => {
-        const color = c.link_color || "#7a6e62";
-        return (
-          <div key={c.id}
-            style={{ padding:"5px 10px", fontSize:12, cursor:"pointer", fontFamily:"sans-serif", display:"flex", alignItems:"center", gap:7 }}
-            onMouseEnter={e => e.currentTarget.style.background="rgba(0,0,0,0.05)"}
-            onMouseLeave={e => e.currentTarget.style.background="transparent"}
-            onClick={() => addChar(c)}>
-            {c.portrait_url
-              ? <img src={c.portrait_url} style={{ width:20, height:20, borderRadius:"50%", objectFit:"cover", border:`1px solid ${color}`, flexShrink:0 }} alt={c.name} />
-              : <div style={{ width:20, height:20, borderRadius:"50%", background:color+"22", border:`1px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, color, fontFamily:"sans-serif", flexShrink:0 }}>{c.name[0]}</div>
-            }
-            <span style={{ color }}>{c.name}</span>
-          </div>
-        );
-      };
-      const dropTop = charDropPos?.top ?? 0;
-      const maxHeight = Math.min(500, window.innerHeight - dropTop - 8);
-      return (
-        <div ref={charDropRef} style={{ position:"fixed", top: dropTop, left: charDropPos?.left ?? 0, zIndex:9999, background:"#ffffff", border:"1px solid rgba(0,0,0,0.15)", borderRadius:6, minWidth:220, maxHeight, overflowY:"auto", boxShadow:"0 4px 20px rgba(0,0,0,0.15)" }}>
-          {available.length === 0
-            ? <div style={{ padding:"8px 12px", fontSize:12, color:"#888", fontStyle:"italic", fontFamily:"sans-serif" }}>All characters added</div>
-            : <>
-                {grouped.map(g => {
-                  const isOpen = !!openGroups[g.name];
-                  return (
-                    <div key={g.name}>
-                      <div
-                        style={{ padding:"6px 10px 4px", fontSize:12, color:"#888", fontFamily:"sans-serif", letterSpacing:"0.04em", textTransform:"uppercase", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", userSelect:"none" }}
-                        onMouseEnter={e => e.currentTarget.style.color="#1a2a3a"}
-                        onMouseLeave={e => e.currentTarget.style.color="#888"}
-                        onClick={() => toggleGroup(g.name)}>
-                        <span>{isOpen ? "▾" : "›"} {g.name}</span>
-                        <span
-                          style={{ fontSize:11, marginRight:2, padding:"0 4px" }}
-                          onClick={e => { e.stopPropagation(); g.chars.forEach(c => addChar(c)); }}
-                          title="Add all">+</span>
-                      </div>
-                      {isOpen && g.chars.map(charRow)}
-                    </div>
-                  );
-                })}
-                {ungrouped.length > 0 && (
-                  <div>
-                    {grouped.length > 0 && <div style={{ padding:"6px 10px 2px", fontSize:12, color:"#888", fontFamily:"sans-serif", letterSpacing:"0.04em", textTransform:"uppercase" }}>Other</div>}
-                    {ungrouped.map(charRow)}
-                  </div>
-                )}
-              </>
-          }
-        </div>
-      );
-    })(),
-    document.body
-  ) : null;
 
   return (
     <>
@@ -771,6 +781,9 @@ function ProseViewer() {
           uncertainChars={uncertainChars}
           removeChar={removeChar}
           bandRef={bandRef}
+          wardrobeMap={wardrobeMap}
+          snapOutfitTags={snapOutfitTags}
+          onOutfitTagToggle={handleOutfitTagToggle}
         />
 
         {/* ── BOTTOM ROW ── */}
@@ -789,20 +802,33 @@ function ProseViewer() {
             timeOfDay={timeOfDay}
             setTimeOfDay={setTimeOfDay}
             weather={weather}
-            setWeather={setWeather}
+            setWeather={handleWeatherChange}
             season={season}
-            setSeason={setSeason}
+            setSeason={handleSeasonChange}
             chapters={chapters}
             selCh={selCh}
             selSc={selSc}
             phase={phase}
-            charRef={charRef}
-            openCharDrop={openCharDrop}
+            allChars={allChars}
+            allGroups={allGroups}
+            sceneChars={sceneChars}
+            addChar={addChar}
             loadChapter={loadChapter}
             scenes={scenes}
             proseRef={proseRef}
             directiveRef={directiveRef}
             onOpenImport={() => setImportOpen(true)}
+            onOpenPlan={() => {
+              const ch = chapters.find(c => c.id === selCh);
+              setPlanDraft(ch?.chapter_plan || "");
+              try {
+                const saved = JSON.parse(localStorage.getItem("planPopupLayout") || "null");
+                setPlanPos(saved ? { x: saved.x, y: saved.y } : { x: Math.round((window.innerWidth + 220) / 2 - 300), y: 80 });
+              } catch {
+                setPlanPos({ x: Math.round((window.innerWidth + 220) / 2 - 300), y: 80 });
+              }
+              setPlanOpen(true);
+            }}
           />
 
           {/* MAIN AREA */}
@@ -839,7 +865,7 @@ function ProseViewer() {
                             b.snap_time_of_day !== prev.snap_time_of_day ||
                             b.snap_weather !== prev.snap_weather ||
                             b.snap_season !== prev.snap_season ||
-                            b.outfit_tag !== prev.outfit_tag ||
+                            JSON.stringify(b.snap_outfit_tags) !== JSON.stringify(prev.snap_outfit_tags) ||
                             b.snap_scene_mode !== prev.snap_scene_mode
                           );
                           return (
@@ -891,7 +917,7 @@ function ProseViewer() {
                                     snap_time_of_day: b.snap_time_of_day,
                                     snap_weather: b.snap_weather,
                                     snap_season: b.snap_season,
-                                    outfit_tag: b.outfit_tag,
+                                    snap_outfit_tags: b.snap_outfit_tags,
                                     snap_scene_mode: b.snap_scene_mode,
                                     snap_active_character_ids: b.snap_active_character_ids,
                                     snap_pov_character_id: b.snap_pov_character_id,
@@ -949,11 +975,18 @@ function ProseViewer() {
               <div style={{ flexShrink:0, padding:"3px 10px 2px", background:"#f0ece4", borderTop:"1px solid rgba(0,0,0,0.06)", display:"flex", gap:5, flexWrap:"wrap", alignItems:"center" }}>
                 {pillSuggestions.map(pill => {
                   if (pill.type === 'outfit') {
-                    const isActive = outfitTag === pill.tag;
+                    const isActive = Object.values(snapOutfitTags).some(tags => tags.includes(pill.tag));
                     return (
                       <button
                         key={pill.id}
-                        onClick={() => setOutfitTag(isActive ? "" : pill.tag)}
+                        onClick={() => setSnapOutfitTags(prev => {
+                          const next = { ...prev };
+                          for (const c of sceneChars) {
+                            const cur = next[c.id] || [];
+                            next[c.id] = isActive ? cur.filter(t => t !== pill.tag) : cur.includes(pill.tag) ? cur : [...cur, pill.tag];
+                          }
+                          return next;
+                        })}
                         title={isActive ? "Click to clear outfit tag" : "Click to set outfit tag"}
                         style={{ background: isActive ? "rgba(100,70,140,0.15)" : "rgba(100,70,140,0.06)", border:`1px solid rgba(100,70,140,${isActive ? "0.55" : "0.28"})`, borderRadius:20, color: isActive ? "#7040a0" : "#8a60b0", fontSize:11, fontFamily:"sans-serif", padding:"2px 9px 2px 7px", cursor:"pointer", letterSpacing:"0.02em", lineHeight:1.5, flexShrink:0, fontWeight: isActive ? 600 : 400 }}
                       >
@@ -995,7 +1028,54 @@ function ProseViewer() {
           </div>
         </div>
       </div>
-      {charDropdown}
+      {planOpen && createPortal(
+        <>
+          <div onClick={closePlan}
+            style={{ position:"fixed", inset:0, zIndex:400 }} />
+          <div
+            ref={planPanelRef}
+            onClick={e => e.stopPropagation()}
+            style={{ position:"fixed", top:planPos.y, left:planPos.x, zIndex:401, background:"#ffffff", border:"1px solid rgba(0,0,0,0.12)", borderRadius:6, padding:"16px 20px", minWidth:280, minHeight:180, boxShadow:"0 4px 24px rgba(0,0,0,0.18)", resize:"both", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+            <div
+              onMouseDown={e => {
+                e.preventDefault();
+                planDragRef.current = { sx: e.clientX, sy: e.clientY, ox: planPos.x, oy: planPos.y };
+                const onMove = ev => {
+                  const d = planDragRef.current;
+                  if (!d) return;
+                  setPlanPos({ x: d.ox + ev.clientX - d.sx, y: d.oy + ev.clientY - d.sy });
+                };
+                const onUp = () => {
+                  planDragRef.current = null;
+                  document.removeEventListener("mousemove", onMove);
+                  document.removeEventListener("mouseup", onUp);
+                };
+                document.addEventListener("mousemove", onMove);
+                document.addEventListener("mouseup", onUp);
+              }}
+              style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12, flexShrink:0, cursor:"move", userSelect:"none" }}>
+              <span style={{ fontSize:10, color:"#8B6914", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase" }}>
+                {chapters.find(c => c.id === selCh)?.title || "Chapter Plan"}
+              </span>
+              <button onClick={closePlan}
+                style={{ background:"none", border:"none", color:"#888", fontSize:16, cursor:"pointer", lineHeight:1, padding:"0 2px" }}>×</button>
+            </div>
+            <textarea
+              autoFocus
+              value={planDraft}
+              onChange={e => setPlanDraft(e.target.value)}
+              onBlur={async () => {
+                if (!selCh) return;
+                await supabase.from("chapters").update({ chapter_plan: planDraft || null }).eq("id", selCh);
+                setChapters(prev => prev.map(c => c.id === selCh ? { ...c, chapter_plan: planDraft || null } : c));
+              }}
+              placeholder="Add chapter plan..."
+              style={{ flex:1, width:"100%", background:"#fafafa", border:"1px solid rgba(0,0,0,0.18)", borderRadius:4, padding:"10px 12px", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, color:"#1a2a3a", resize:"none", outline:"none", boxSizing:"border-box" }}
+            />
+          </div>
+        </>,
+        document.body
+      )}
       {processChapterOpen && selCh && (() => {
         const ch = chapters.find(c => c.id === selCh);
         return ch ? (
@@ -1082,6 +1162,7 @@ export default function App() {
       <Route path="/places" element={<Places />} />
       <Route path="/debug" element={<SnapDebug />} />
       <Route path="/map" element={<StoryMap />} />
+      <Route path="/arc" element={<ArcPlanner />} />
     </Routes>
   );
 }

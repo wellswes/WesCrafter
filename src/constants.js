@@ -68,7 +68,7 @@ export const dropItem = {
 
 export const fetchChapters = async () => {
   const { data } = await supabase
-    .from("chapters").select("id, sequence_number, title")
+    .from("chapters").select("id, sequence_number, title, chapter_plan")
     .eq("story_id", STORY_ID).order("sequence_number", { ascending: true });
   return data || [];
 };
@@ -80,7 +80,7 @@ export const fetchScenes = async (chapterId) => {
 };
 export const fetchBeats = async (sceneId) => {
   const { data } = await supabase
-    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id, snap_weather, snap_season, outfit_tag")
+    .from("beats").select("id, sequence_number, type, directive, emotional_register, tags, prose_text, snap_location_id, snap_time_of_day, snap_scene_mode, snap_active_character_ids, snap_pov_character_id, snap_weather, snap_season, snap_outfit_tags")
     .eq("scene_id", sceneId).order("sequence_number", { ascending: true });
   return data || [];
 };

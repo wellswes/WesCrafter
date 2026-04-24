@@ -38,20 +38,12 @@ export default function WritePanel({ directive, setDirective, generate, generati
         />
       </div>
 
-      {directive.trim() ? (
-        <button
-          onClick={generate}
-          disabled={generating}
-          style={{ flexShrink:0, background: !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${!generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
-          {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
-        </button>
-      ) : (
-        <button
-          onClick={createBlankBeat}
-          style={{ flexShrink:0, background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor:"pointer", minWidth:80 }}>
-          Create Beat
-        </button>
-      )}
+      <button
+        onClick={generate}
+        disabled={generating}
+        style={{ flexShrink:0, background: !generating ? "var(--gold2)" : "var(--bg4)", border:`1px solid ${!generating ? "var(--gold)" : "var(--border2)"}`, borderRadius:4, color: !generating ? "#1a1410" : "var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 14px", cursor: !generating ? "pointer" : "not-allowed", opacity: generating ? 0.7 : 1, minWidth:80, display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}>
+        {generating ? <><span className="spin" />&nbsp;Generating</> : "Generate"}
+      </button>
 
       {wordCount > 0 && (
         <span style={{ flexShrink:0, fontSize:10, fontFamily:"sans-serif", color:"#8a7a6a", letterSpacing:"0.03em", alignSelf:"center" }}>

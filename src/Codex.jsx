@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import { supabase } from "./supabase.js";
 
@@ -93,33 +94,36 @@ const COMBAT_FIELDS = [
   { key:"equipment_notes", label:"Equipment Notes" },
 ];
 
-// ── FieldList ────────────────────────────────────────────────────────────────
-function FieldList({ data, fields, editing, draft, onDraftChange }) {
-  if (!editing) {
-    if (!data) return <div style={S.msg}>No data yet.</div>;
-    const entries = fields.filter(f => data[f.key] != null && data[f.key] !== "");
-    if (!entries.length) return <div style={S.msg}>No data yet.</div>;
-    return (
-      <>
-        {entries.map(f => (
-          <div key={f.key}>
-            <div style={S.secLbl}>{f.label}</div>
-            <div style={S.secBody}>{String(data[f.key])}</div>
-          </div>
-        ))}
-      </>
-    );
-  }
+// ── InlineFieldList ──────────────────────────────────────────────────────────
+function InlineFieldList({ data, fields, onSave }) {
+  const [drafts, setDrafts] = useState({});
+
+  useEffect(() => { setDrafts({}); }, [data]);
+
+  const getVal = (key) => drafts[key] !== undefined ? drafts[key] : (data?.[key] ?? "");
+  const setVal = (key, val) => setDrafts(p => ({ ...p, [key]: val }));
+
+  const saveField = async (key) => {
+    if (drafts[key] === undefined) return;
+    const raw = drafts[key];
+    const saved = data?.[key] ?? "";
+    setDrafts(p => { const n = { ...p }; delete n[key]; return n; });
+    if (raw === saved) return;
+    await onSave(key, raw || null);
+  };
+
+  const ta = { width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" };
+
   return (
-    <>
+    <div style={{ display:"flex", flexDirection:"column", gap:18 }}>
       {fields.map(f => (
-        <div key={f.key} style={{ marginBottom:20 }}>
+        <div key={f.key}>
           <div style={S.secLbl}>{f.label}</div>
-          <textarea value={draft[f.key] ?? ""} onChange={e => onDraftChange(f.key, e.target.value)} rows={3}
-            style={{ width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" }} />
+          <textarea value={getVal(f.key)} onChange={e => setVal(f.key, e.target.value)}
+            onBlur={() => saveField(f.key)} rows={4} style={ta} />
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
@@ -243,9 +247,6 @@ function DetailPanel({ char, onCharUpdate }) {
   const [rels,       setRels]       = useState(null);
   const [relsChars,  setRelsChars]  = useState({});
   const [loading,    setLoading]    = useState(false);
-  const [editing,    setEditing]    = useState(false);
-  const [draft,      setDraft]      = useState({});
-  const [saving,     setSaving]     = useState(false);
   const [copied,     setCopied]     = useState(false);
   // name editing
   const [editingName, setEditingName] = useState(false);
@@ -260,7 +261,7 @@ function DetailPanel({ char, onCharUpdate }) {
   useEffect(() => {
     setTab("Core"); setErotic(undefined); setCombat(undefined);
     setSprites(null); setRels(null); setRelsChars({});
-    setEditing(false); setLoading(true);
+    setLoading(true);
     setEditingName(false); setNameDraft(char.name); setNewAlias("");
     Promise.all([
       supabase.from("character_erotic").select("*").eq("character_id", char.id).single(),
@@ -293,33 +294,6 @@ function DetailPanel({ char, onCharUpdate }) {
       for (const c of chars || []) map[c.id] = c.name;
       setRelsChars(map);
     }
-  };
-
-  const dataForTab   = () => tab === "Core" ? char   : tab === "Erotic" ? erotic  : combat;
-  const fieldsForTab = () => tab === "Core" ? CORE_FIELDS : tab === "Erotic" ? EROTIC_FIELDS : COMBAT_FIELDS;
-
-  const startEdit = () => {
-    const src = dataForTab() || {}, init = {};
-    fieldsForTab().forEach(f => { init[f.key] = src[f.key] ?? ""; });
-    setDraft(init); setEditing(true);
-  };
-  const cancelEdit = () => { setEditing(false); setDraft({}); };
-  const saveEdit = async () => {
-    setSaving(true);
-    const payload = {};
-    fieldsForTab().forEach(f => { payload[f.key] = draft[f.key] || null; });
-    try {
-      if (tab === "Core") {
-        await supabase.from("characters").update(payload).eq("id", char.id);
-        onCharUpdate({ ...char, ...payload });
-      } else if (tab === "Erotic") {
-        await supabase.from("character_erotic").upsert({ ...payload, character_id: char.id }, { onConflict:"character_id" });
-        setErotic(prev => ({ ...(prev||{}), ...payload, character_id: char.id }));
-      } else {
-        await supabase.from("character_combat").upsert({ ...payload, character_id: char.id }, { onConflict:"character_id" });
-        setCombat(prev => ({ ...(prev||{}), ...payload, character_id: char.id }));
-      }
-    } finally { setSaving(false); setEditing(false); setDraft({}); }
   };
 
   const copyForNovelCrafter = () => {
@@ -410,7 +384,7 @@ function DetailPanel({ char, onCharUpdate }) {
   const meta        = [char.character_group, char.role, char.species].filter(Boolean).join(" · ");
   const charType    = char.char_type || "supporting";
   const aliasesList = char.aliases || [];
-  const isTextTab   = ["Erotic", "Combat"].includes(tab);
+  const isTextTab   = tab === "Erotic" || tab === "Combat";
 
   return (
     <div style={{ display:"flex", gap:28, alignItems:"flex-start" }}>
@@ -448,11 +422,6 @@ function DetailPanel({ char, onCharUpdate }) {
           {!loading && isTextTab && (
             <div style={{ display:"flex", gap:6, flexShrink:0, paddingTop:6 }}>
               <button onClick={copyForNovelCrafter} style={taBtn}>{copied ? "Copied!" : "Copy"}</button>
-              {editing
-                ? <><button onClick={saveEdit} disabled={saving} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
-                     <button onClick={cancelEdit} disabled={saving} style={taBtn}>Cancel</button></>
-                : <button onClick={startEdit} style={taBtn}>Edit</button>
-              }
             </div>
           )}
         </div>
@@ -479,12 +448,12 @@ function DetailPanel({ char, onCharUpdate }) {
         {/* tabs */}
         <div style={{ display:"flex", gap:0, borderBottom:"1px solid var(--border)", marginBottom:24 }}>
           {TABS.map(t => (
-            <button key={t} onClick={() => { if (!editing) setTab(t); }} style={{
-              background:"none", border:"none", cursor: editing ? "default" : "pointer",
+            <button key={t} onClick={() => setTab(t)} style={{
+              background:"none", border:"none", cursor:"pointer",
               padding:"8px 16px 7px", fontSize:10, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase",
               color: t === tab ? "var(--gold)" : "var(--text4)",
               borderBottom: t === tab ? "2px solid var(--gold)" : "2px solid transparent",
-              marginBottom:-1, opacity: editing && t !== tab ? 0.4 : 1,
+              marginBottom:-1,
             }}>{t}</button>
           ))}
         </div>
@@ -492,12 +461,24 @@ function DetailPanel({ char, onCharUpdate }) {
         {/* core tab */}
         {tab === "Core" && <CoreTab char={char} onCharUpdate={onCharUpdate} />}
 
-        {/* erotic / combat tabs */}
-        {isTextTab && (
-          loading
-            ? <div style={S.msg}>Loading…</div>
-            : <FieldList data={dataForTab()} fields={fieldsForTab()} editing={editing} draft={draft}
-                onDraftChange={(k, v) => setDraft(p => ({ ...p, [k]: v }))} />
+        {/* erotic tab */}
+        {tab === "Erotic" && (
+          loading ? <div style={S.msg}>Loading…</div>
+          : <InlineFieldList data={erotic} fields={EROTIC_FIELDS}
+              onSave={async (key, val) => {
+                await supabase.from("character_erotic").upsert({ [key]: val, character_id: char.id }, { onConflict:"character_id" });
+                setErotic(prev => ({ ...(prev||{}), [key]: val, character_id: char.id }));
+              }} />
+        )}
+
+        {/* combat tab */}
+        {tab === "Combat" && (
+          loading ? <div style={S.msg}>Loading…</div>
+          : <InlineFieldList data={combat} fields={COMBAT_FIELDS}
+              onSave={async (key, val) => {
+                await supabase.from("character_combat").upsert({ [key]: val, character_id: char.id }, { onConflict:"character_id" });
+                setCombat(prev => ({ ...(prev||{}), [key]: val, character_id: char.id }));
+              }} />
         )}
 
         {/* sprites tab */}
@@ -609,13 +590,18 @@ function DetailPanel({ char, onCharUpdate }) {
 }
 
 // ── LocationDetail ───────────────────────────────────────────────────────────
-function LocationDetail({ place, characters }) {
+function LocationDetail({ place, characters, onPlaceUpdate }) {
   const [occupants,        setOccupants]        = useState([]);
   const [addOpen,          setAddOpen]          = useState(false);
   const [pendingChar,      setPendingChar]      = useState(null);
   const [pendingRole,      setPendingRole]      = useState("regular");
   const [containers,       setContainers]       = useState([]);
   const [openContainers,   setOpenContainers]   = useState({});
+  // inline editing
+  const [localPlace,  setLocalPlace]  = useState(place);
+  const [editField,   setEditField]   = useState(null);
+  const [fieldDraft,  setFieldDraft]  = useState("");
+  const [fieldSaving, setFieldSaving] = useState(false);
 
   const fetchOccupants = useCallback(async () => {
     const { data } = await supabase
@@ -643,9 +629,31 @@ function LocationDetail({ place, characters }) {
   }, [place.id]);
 
   useEffect(() => {
+    setLocalPlace(place); setEditField(null); setFieldDraft("");
     setOccupants([]); setPendingChar(null); setAddOpen(false); fetchOccupants();
     setContainers([]); setOpenContainers({}); fetchContainers();
   }, [fetchOccupants, fetchContainers]);
+
+  const startEdit = (key) => { setEditField(key); setFieldDraft(localPlace[key] || ""); };
+  const cancelEdit = () => { setEditField(null); setFieldDraft(""); };
+  const saveField = async () => {
+    setFieldSaving(true);
+    await supabase.from("places").update({ [editField]: fieldDraft || null }).eq("id", localPlace.id);
+    const updated = { ...localPlace, [editField]: fieldDraft || null };
+    setLocalPlace(updated);
+    onPlaceUpdate?.(updated);
+    setFieldSaving(false);
+    setEditField(null);
+  };
+
+  const fieldTa = { width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7, padding:"8px 10px", resize:"vertical", outline:"none" };
+  const pencil  = { background:"none", border:"none", cursor:"pointer", color:"var(--text4)", fontSize:12, padding:"0 0 0 6px", lineHeight:1, flexShrink:0, opacity:0.55 };
+  const editBtns = (
+    <div style={{ display:"flex", gap:6, marginTop:5 }}>
+      <button onClick={saveField} disabled={fieldSaving} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>{fieldSaving ? "Saving…" : "Save"}</button>
+      <button onClick={cancelEdit} disabled={fieldSaving} style={taBtn}>Cancel</button>
+    </div>
+  );
 
   const toggleItem = async (itemId, currentValue) => {
     const newVal = !currentValue;
@@ -671,12 +679,52 @@ function LocationDetail({ place, characters }) {
 
   return (
     <div>
-      <div style={{ display:"flex", alignItems:"baseline", gap:10, marginBottom:6 }}>
-        <div style={S.detName}>{place.name}</div>
-        {place.place_type && <span style={S.locType}>{place.place_type}</span>}
+      {/* Name */}
+      <div style={{ display:"flex", alignItems:"baseline", gap:8, marginBottom:6 }}>
+        {editField === "name" ? (
+          <div style={{ flex:1, marginBottom:6 }}>
+            <input value={fieldDraft} onChange={e => setFieldDraft(e.target.value)}
+              style={{ fontSize:22, color:"var(--gold)", background:"transparent", border:"none", borderBottom:"1px solid var(--gold2)", outline:"none", fontFamily:"Georgia, serif", width:"100%" }} />
+            {editBtns}
+          </div>
+        ) : (
+          <>
+            <div style={S.detName}>{localPlace.name}</div>
+            {localPlace.place_type && <span style={S.locType}>{localPlace.place_type}</span>}
+            <button onClick={() => startEdit("name")} style={pencil} title="Edit name">✏</button>
+          </>
+        )}
       </div>
-      {place.atmosphere  && <div style={S.detAtm}>{place.atmosphere}</div>}
-      {place.description && <div style={S.detDesc}>{place.description}</div>}
+
+      {/* Atmosphere */}
+      {editField === "atmosphere" ? (
+        <div style={{ marginBottom:16 }}>
+          <textarea value={fieldDraft} onChange={e => setFieldDraft(e.target.value)} rows={3} style={fieldTa} />
+          {editBtns}
+        </div>
+      ) : localPlace.atmosphere ? (
+        <div style={{ display:"flex", alignItems:"flex-start", gap:2, marginBottom:16 }}>
+          <div style={{ ...S.detAtm, flex:1, marginBottom:0 }}>{localPlace.atmosphere}</div>
+          <button onClick={() => startEdit("atmosphere")} style={pencil} title="Edit atmosphere">✏</button>
+        </div>
+      ) : (
+        <button onClick={() => startEdit("atmosphere")} style={{ ...taBtn, fontSize:10, marginBottom:12 }}>+ Atmosphere</button>
+      )}
+
+      {/* Description */}
+      {editField === "description" ? (
+        <div style={{ marginBottom:20 }}>
+          <textarea value={fieldDraft} onChange={e => setFieldDraft(e.target.value)} rows={6} style={fieldTa} />
+          {editBtns}
+        </div>
+      ) : localPlace.description ? (
+        <div style={{ display:"flex", alignItems:"flex-start", gap:2, marginBottom:20 }}>
+          <div style={{ ...S.detDesc, flex:1, marginBottom:0 }}>{localPlace.description}</div>
+          <button onClick={() => startEdit("description")} style={pencil} title="Edit description">✏</button>
+        </div>
+      ) : (
+        <button onClick={() => startEdit("description")} style={{ ...taBtn, fontSize:10, marginBottom:14 }}>+ Description</button>
+      )}
 
       <div style={{ marginTop:8 }}>
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
@@ -852,6 +900,93 @@ function PlacesSidebar({ places, collapsed, toggleCollapsed, selectedPlace, setS
   );
 }
 
+// ── CascadeLocCodex ───────────────────────────────────────────────────────────
+const COL_W_C  = 168;
+const ITEM_H_C = 31;
+
+function CascadeLocCodex({ allLocs, locationId, onSelect, onClose, anchorRef }) {
+  const [hoveredPath, setHoveredPath] = useState([]);
+  const menuRef = useRef(null);
+
+  const valdris      = allLocs.find(l => l.place_type === "continent");
+  const coastalReach = valdris ? allLocs.find(l => l.parent_id === valdris.id) : null;
+  const rootParentId = coastalReach?.id ?? (valdris?.id ?? null);
+
+  const childrenOf = id => allLocs.filter(l => l.parent_id === id);
+
+  const columns = [childrenOf(rootParentId)];
+  for (let i = 0; i < hoveredPath.length; i++) {
+    const kids = childrenOf(hoveredPath[i].id);
+    if (!kids.length) break;
+    columns.push(kids);
+  }
+
+  const colTop = (colIdx, itemCount) => {
+    const rawTop = colIdx === 0
+      ? (anchorRef.current?.getBoundingClientRect().top ?? 100)
+      : (hoveredPath[colIdx - 1]?.y ?? 100);
+    const estH = Math.min(360, itemCount * ITEM_H_C + 8);
+    return Math.max(8, Math.min(rawTop, window.innerHeight - estH - 8));
+  };
+
+  const anchorLeft = anchorRef.current
+    ? anchorRef.current.getBoundingClientRect().right + 3
+    : 300;
+
+  useEffect(() => {
+    const h = e => {
+      if (menuRef.current   && menuRef.current.contains(e.target))   return;
+      if (anchorRef.current && anchorRef.current.contains(e.target)) return;
+      onClose();
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return createPortal(
+    <div ref={menuRef} style={{ position:"fixed", inset:0, zIndex:9999, pointerEvents:"none" }}>
+      {columns.map((items, colIdx) => {
+        const top  = colTop(colIdx, items.length);
+        const maxH = window.innerHeight - top - 8;
+        const left = anchorLeft + colIdx * (COL_W_C + 2);
+        return (
+          <div key={colIdx} style={{
+            position:"absolute", top, left,
+            width:COL_W_C, background:"var(--bg2)",
+            border:"1px solid var(--border2)", borderRadius:4,
+            boxShadow:"0 4px 16px rgba(0,0,0,0.4)",
+            maxHeight:maxH, overflowY:"auto",
+            pointerEvents:"auto",
+          }}>
+            {items.map(loc => {
+              const hasKids = allLocs.some(l => l.parent_id === loc.id);
+              const active  = hoveredPath[colIdx]?.id === loc.id;
+              const sel     = loc.id === locationId;
+              return (
+                <div key={loc.id}
+                  onMouseEnter={e => {
+                    const y = e.currentTarget.getBoundingClientRect().top;
+                    setHoveredPath(p => [...p.slice(0, colIdx), { id: loc.id, y }]);
+                  }}
+                  onClick={e => { e.stopPropagation(); onSelect(loc); }}
+                  style={{ display:"flex", alignItems:"center", padding:"6px 8px 6px 10px", gap:4,
+                    fontSize:12, fontFamily:"sans-serif", cursor:"pointer", userSelect:"none",
+                    color: (active || sel) ? "var(--gold)" : "var(--text)",
+                    background: active ? "var(--bg4)" : "transparent",
+                    fontWeight: sel ? 600 : 400 }}>
+                  <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{loc.name}</span>
+                  {hasKids && <span style={{ fontSize:10, color: active ? "var(--gold)" : "var(--text4)", flexShrink:0 }}>›</span>}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>,
+    document.body
+  );
+}
+
 // ── Lore helpers ─────────────────────────────────────────────────────────────
 const formatCategory = s => (s || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
@@ -892,25 +1027,25 @@ function LorePanel({ entries, onSelect }) {
 }
 
 function LoreModal({ entry, onClose, onUpdate, onDelete }) {
-  const [editing,  setEditing]  = useState(false);
-  const [saving,   setSaving]   = useState(false);
-  const [confirm,  setConfirm]  = useState(false);
-  const [draft,    setDraft]    = useState({});
+  const [confirm, setConfirm] = useState(false);
+  const [draft, setDraft] = useState({
+    title:     entry.title     || "",
+    category:  entry.category  || "",
+    tags:      (entry.tags || []).join(", "),
+    body_text: entry.body_text || "",
+  });
 
-  const startEdit = () => {
-    setDraft({ title: entry.title || "", category: entry.category || "", tags: (entry.tags || []).join(", "), body_text: entry.body_text || "" });
-    setEditing(true);
-  };
-  const cancelEdit = () => { setEditing(false); setDraft({}); };
-
-  const save = async () => {
-    setSaving(true);
-    const tags = draft.tags.split(",").map(t => t.trim()).filter(Boolean);
-    const payload = { title: draft.title || null, category: draft.category || null, tags, body_text: draft.body_text || null };
-    await supabase.from("lore_entries").update(payload).eq("id", entry.id);
-    onUpdate({ ...entry, ...payload });
-    setSaving(false);
-    setEditing(false);
+  const saveField = async (key, val) => {
+    if (key === "tags") {
+      const tags = val.split(",").map(t => t.trim()).filter(Boolean);
+      if (val.trim() === (entry.tags || []).join(", ")) return;
+      await supabase.from("lore_entries").update({ tags }).eq("id", entry.id);
+      onUpdate({ ...entry, tags });
+    } else {
+      if (val === (entry[key] || "")) return;
+      await supabase.from("lore_entries").update({ [key]: val || null }).eq("id", entry.id);
+      onUpdate({ ...entry, [key]: val || null });
+    }
   };
 
   const del = async () => {
@@ -924,56 +1059,39 @@ function LoreModal({ entry, onClose, onUpdate, onDelete }) {
   return (
     <div onClick={onClose} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.72)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div onClick={e => e.stopPropagation()} style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:8, padding:"28px 32px", maxWidth:660, width:"90%", maxHeight:"82vh", overflowY:"auto", position:"relative" }}>
-        {/* close */}
         <button onClick={onClose} style={{ position:"absolute", top:12, right:14, background:"none", border:"none", color:"var(--text4)", fontSize:18, cursor:"pointer", lineHeight:1 }}>✕</button>
 
-        {!editing ? (
-          <>
-            <div style={{ fontSize:24, color:"var(--gold)", fontWeight:"normal", marginBottom:6, paddingRight:24 }}>{entry.title}</div>
-            <div style={{ fontSize:10, color:"var(--gold2)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10 }}>{formatCategory(entry.category)}</div>
-            {(entry.tags || []).length > 0 && (
-              <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginBottom:16 }}>
-                {entry.tags.map(tag => <span key={tag} style={loreBadge}>{tag}</span>)}
-              </div>
-            )}
-            <div style={{ fontSize:15, lineHeight:1.8, color:"var(--text)", whiteSpace:"pre-wrap" }}>{entry.body_text}</div>
-            <div style={{ display:"flex", gap:8, marginTop:20 }}>
-              <button onClick={startEdit} style={{ ...taBtn }}>Edit</button>
-              {!confirm
-                ? <button onClick={() => setConfirm(true)} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Delete</button>
-                : <>
-                    <span style={{ fontSize:12, fontFamily:"sans-serif", color:"var(--text4)", alignSelf:"center" }}>Delete this entry?</span>
-                    <button onClick={del} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Yes, delete</button>
-                    <button onClick={() => setConfirm(false)} style={{ ...taBtn }}>Cancel</button>
-                  </>
-              }
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ marginBottom:14 }}>
-              <div style={S.secLbl}>Title</div>
-              <input value={draft.title} onChange={e => setDraft(p => ({...p, title: e.target.value}))} style={inp} />
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <div style={S.secLbl}>Category</div>
-              <input value={draft.category} onChange={e => setDraft(p => ({...p, category: e.target.value}))} style={inp} placeholder="e.g. found_object" />
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <div style={S.secLbl}>Tags (comma-separated)</div>
-              <input value={draft.tags} onChange={e => setDraft(p => ({...p, tags: e.target.value}))} style={inp} />
-            </div>
-            <div style={{ marginBottom:14 }}>
-              <div style={S.secLbl}>Body</div>
-              <textarea value={draft.body_text} onChange={e => setDraft(p => ({...p, body_text: e.target.value}))} rows={8}
-                style={{ ...inp, resize:"vertical", lineHeight:1.7 }} />
-            </div>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={save} disabled={saving} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)" }}>{saving ? "Saving…" : "Save"}</button>
-              <button onClick={cancelEdit} disabled={saving} style={{ ...taBtn }}>Cancel</button>
-            </div>
-          </>
-        )}
+        <div style={{ marginBottom:14 }}>
+          <div style={S.secLbl}>Title</div>
+          <input value={draft.title} onChange={e => setDraft(p => ({...p, title: e.target.value}))}
+            onBlur={() => saveField("title", draft.title)} style={inp} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <div style={S.secLbl}>Category</div>
+          <input value={draft.category} onChange={e => setDraft(p => ({...p, category: e.target.value}))}
+            onBlur={() => saveField("category", draft.category)} style={inp} placeholder="e.g. found_object" />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <div style={S.secLbl}>Tags (comma-separated)</div>
+          <input value={draft.tags} onChange={e => setDraft(p => ({...p, tags: e.target.value}))}
+            onBlur={() => saveField("tags", draft.tags)} style={inp} />
+        </div>
+        <div style={{ marginBottom:14 }}>
+          <div style={S.secLbl}>Body</div>
+          <textarea value={draft.body_text} onChange={e => setDraft(p => ({...p, body_text: e.target.value}))}
+            onBlur={() => saveField("body_text", draft.body_text)} rows={8}
+            style={{ ...inp, resize:"vertical", lineHeight:1.7 }} />
+        </div>
+        <div style={{ display:"flex", gap:8, marginTop:4 }}>
+          {!confirm
+            ? <button onClick={() => setConfirm(true)} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Delete</button>
+            : <>
+                <span style={{ fontSize:12, fontFamily:"sans-serif", color:"var(--text4)", alignSelf:"center" }}>Delete this entry?</span>
+                <button onClick={del} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Yes, delete</button>
+                <button onClick={() => setConfirm(false)} style={{ ...taBtn }}>Cancel</button>
+              </>
+          }
+        </div>
       </div>
     </div>
   );
@@ -1046,6 +1164,8 @@ export default function Codex() {
     return saved ? new Set(JSON.parse(saved)) : new Set();
   });
   const [selectedPlace, setSelectedPlace] = useState(null);
+  const [showLocFlyout, setShowLocFlyout] = useState(false);
+  const locBtnRef = useRef(null);
   // shared
   const [storyTitle,   setStoryTitle]   = useState("");
   const [phase,        setPhase]        = useState("loading");
@@ -1193,20 +1313,23 @@ export default function Codex() {
           <span style={{ fontSize:15, color:"var(--gold)", fontFamily:"Georgia, serif" }}>
             {storyTitle ? `${storyTitle.split(':')[0].trim()} Codex` : "Codex"}
           </span>
+          <div style={{ flex:1 }} />
+          <Link to="/map" style={S.back}>Map</Link>
         </div>
 
         <div style={S.body}>
           {/* sidebar */}
-          <div style={{ ...S.sidebar, width: section === "lore" ? "auto" : sidebarWidth, minWidth: section === "lore" ? 0 : undefined }}>
+          <div style={{ ...S.sidebar, width: sidebarWidth }}>
             {/* section toggle */}
             <div style={S.secToggle}>
-              {["characters","places","lore"].map(s => (
+              {["characters","places"].map(s => (
                 <button key={s} onClick={() => setSection(s)} style={{
                   ...S.secBtn,
                   color:       section === s ? "var(--gold)"   : "var(--text4)",
                   background: "none", border:"none", borderBottom: section === s ? "2px solid var(--gold)" : "2px solid transparent",
                 }}>{s}</button>
               ))}
+              <a href="/arc" style={{ ...S.secBtn, color:"var(--text4)", textDecoration:"none", borderBottom:"2px solid transparent", display:"flex", alignItems:"center" }}>arcs</a>
             </div>
 
             {phase === "loading" && <div style={{...S.msg, padding:"24px 14px"}}>Loading…</div>}
@@ -1255,26 +1378,37 @@ export default function Codex() {
 
             {/* places section */}
             {phase === "ready" && section === "places" && (
-              <PlacesSidebar
-                places={places}
-                collapsed={placesCollapsed}
-                toggleCollapsed={togglePlacesCollapsed}
-                selectedPlace={selectedPlace}
-                setSelectedPlace={setSelectedPlace}
-              />
+              <div style={{ padding:"8px", flexShrink:0 }}>
+                <button ref={locBtnRef} onClick={() => setShowLocFlyout(p => !p)}
+                  style={{ width:"100%", background:"var(--bg3)", border:"1px solid var(--border2)", borderRadius:4,
+                    color: selectedPlace ? "var(--text)" : "var(--text4)", fontSize:12, fontFamily:"sans-serif",
+                    cursor:"pointer", padding:"6px 10px", display:"flex", alignItems:"center", justifyContent:"space-between", textAlign:"left" }}>
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {selectedPlace?.name || "Select location…"}
+                  </span>
+                  <span style={{ fontSize:9, color:"var(--text4)", flexShrink:0, marginLeft:4 }}>›</span>
+                </button>
+                {showLocFlyout && (
+                  <CascadeLocCodex
+                    allLocs={places}
+                    locationId={selectedPlace?.id}
+                    onSelect={loc => { setSelectedPlace(loc); setShowLocFlyout(false); }}
+                    onClose={() => setShowLocFlyout(false)}
+                    anchorRef={locBtnRef}
+                  />
+                )}
+              </div>
             )}
           </div>
 
-          {/* resize handle — hidden for lore */}
-          {section !== "lore" && (
-            <div onMouseDown={onResizeMouseDown}
-              style={{ width:4, flexShrink:0, cursor:"col-resize", background:"transparent" }}
-              onMouseEnter={e => e.currentTarget.style.background = "var(--border2)"}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"} />
-          )}
+          {/* resize handle */}
+          <div onMouseDown={onResizeMouseDown}
+            style={{ width:4, flexShrink:0, cursor:"col-resize", background:"transparent" }}
+            onMouseEnter={e => e.currentTarget.style.background = "var(--border2)"}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"} />
 
           {/* detail panel */}
-          <div style={{ ...S.panel, paddingLeft: section === "lore" ? 48 : 0 }}>
+          <div style={S.panel}>
             {section === "characters" && (
               !selected
                 ? <div style={S.msg}>Select a character.</div>
@@ -1284,12 +1418,11 @@ export default function Codex() {
             {section === "places" && (
               !selectedPlace
                 ? <div style={S.msg}>Select a location.</div>
-                : <LocationDetail key={selectedPlace.id} place={selectedPlace} characters={characters} />
-            )}
-            {section === "lore" && (
-              loreLoading || loreEntries === null
-                ? <div style={S.msg}>Loading…</div>
-                : <LorePanel entries={loreEntries} onSelect={setLoreModal} />
+                : <LocationDetail key={selectedPlace.id} place={selectedPlace} characters={characters}
+                    onPlaceUpdate={updated => {
+                      setSelectedPlace(updated);
+                      setPlaces(prev => prev.map(p => p.id === updated.id ? updated : p));
+                    }} />
             )}
           </div>
         </div>
