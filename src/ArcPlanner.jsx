@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase, STORY_ID, WORLD_ID, selFull } from "./constants.js";
 
 // ── Design tokens — exact write page values ───────────────────────────────
@@ -96,8 +97,10 @@ export default function ArcPlanner() {
   const [incompleteWarn,   setIncompleteWarn]   = useState(null);
   const planRef = useRef(null);
 
-  const [drag,    setDrag]    = useState(null);
-  const [dropOn,  setDropOn]  = useState(null);
+  const [drag,             setDrag]             = useState(null);
+  const [dropOn,           setDropOn]           = useState(null);
+  const [deleteArcConfirm, setDeleteArcConfirm] = useState(null);
+  const [detailBeatEv,     setDetailBeatEv]     = useState(null);
 
   // ── Load ─────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -170,10 +173,14 @@ export default function ArcPlanner() {
   }, [selChapId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  const blockingTitles = id =>
+  const blockingBeats = id =>
     deps.filter(d => d.beat_id === id)
         .filter(d => beats.find(b => b.id === d.requires_beat_id)?.status !== "complete")
-        .map(d => beats.find(b => b.id === d.requires_beat_id)?.title || "?");
+        .map(d => {
+          const b = beats.find(x => x.id === d.requires_beat_id);
+          const a = b ? arcs.find(x => x.id === b.arc_id) : null;
+          return { depId: d.id, beatId: b?.id, beatTitle: b?.title || "?", arcTitle: a?.title || "?" };
+        });
 
   const recommended = beats.filter(b => b.status === "available" && deps.some(d => d.beat_id === b.id));
   const evCharsFor  = id => evChars.filter(ec => ec.chapter_plan_id === id).map(ec => chars.find(c => c.id === ec.character_id)).filter(Boolean);
@@ -190,6 +197,7 @@ export default function ArcPlanner() {
       .select("*").single();
     if (data) {
       setEvents(p => [...p, data]);
+      if (beat.id === detail?.id) setDetailBeatEv(data);
       console.log("[dropBeat] updating arc_beat", beat.id, "status: in_chapter, chapter_completed:", chapterCompleted);
       const { error } = await supabase.from("arc_beats")
         .update({ status: "in_chapter", chapter_completed: chapterCompleted })
@@ -209,6 +217,7 @@ export default function ArcPlanner() {
     const { error } = await supabase.from("chapter_plan").update({ status }).eq("id", ev.id);
     if (error) { alert("Failed to update status: " + error.message); return; }
     setEvents(p => p.map(e => e.id === ev.id ? { ...e, status } : e));
+    if (ev.beat_id === detail?.id) setDetailBeatEv(p => p ? { ...p, status } : p);
     if (status === "complete" && ev.beat_id) {
       const selChap = chapters.find(c => c.id === selChapId);
       await supabase.from("arc_beats").update({ status: "complete", chapter_completed: selChap?.sequence_number ?? null }).eq("id", ev.beat_id);
@@ -233,6 +242,7 @@ export default function ArcPlanner() {
     if (ev.beat_id) {
       await supabase.from("arc_beats").update({ status: "available" }).eq("id", ev.beat_id);
       setBeats(p => p.map(b => b.id === ev.beat_id ? { ...b, status: "available" } : b));
+      if (ev.beat_id === detail?.id) setDetailBeatEv(null);
     }
   };
 
@@ -257,15 +267,18 @@ export default function ArcPlanner() {
       await supabase.from("arc_beats").update({ chapter_completed: null, status: "available" }).eq("id", ev.beat_id);
       setBeats(p => p.map(b => b.id === ev.beat_id ? { ...b, chapter_completed: null, status: "available" } : b));
     }
+    setDetailBeatEv(null);
     setDetail(null);
   };
 
-  const completeArcBeat = async ev => {
-    if (!ev.beat_id) return;
-    await supabase.from("arc_beats").update({ status: "complete" }).eq("id", ev.beat_id);
-    setBeats(p => p.map(b => b.id === ev.beat_id ? { ...b, status: "complete" } : b));
-    await supabase.from("chapter_plan").update({ status: "complete" }).eq("id", ev.id);
-    setEvents(p => p.map(e => e.id === ev.id ? { ...e, status: "complete" } : e));
+  const completeArcBeat = async (beat, ev) => {
+    await supabase.from("arc_beats").update({ status: "complete" }).eq("id", beat.id);
+    setBeats(p => p.map(b => b.id === beat.id ? { ...b, status: "complete" } : b));
+    if (ev) {
+      await supabase.from("chapter_plan").update({ status: "complete" }).eq("id", ev.id);
+      setEvents(p => p.map(e => e.id === ev.id ? { ...e, status: "complete" } : e));
+      if (beat.id === detail?.id) setDetailBeatEv(p => p ? { ...p, status: "complete" } : p);
+    }
   };
 
   const deleteArcBeat = async ev => {
@@ -279,6 +292,28 @@ export default function ArcPlanner() {
     setEvChars(p => p.filter(ec => ec.chapter_plan_id !== ev.id));
     setEvLore(p => p.filter(el => el.chapter_plan_id !== ev.id));
     setDetail(null);
+  };
+
+  const deleteDetailBeat = async (beat, ev) => {
+    if (!window.confirm("Delete this beat permanently?")) return;
+    await supabase.from("beat_dependencies").delete().eq("beat_id", beat.id);
+    await supabase.from("beat_dependencies").delete().eq("requires_beat_id", beat.id);
+    if (ev) {
+      await supabase.from("chapter_plan").delete().eq("id", ev.id);
+      setEvents(p => p.filter(e => e.id !== ev.id));
+      setEvChars(p => p.filter(ec => ec.chapter_plan_id !== ev.id));
+      setEvLore(p => p.filter(el => el.chapter_plan_id !== ev.id));
+    }
+    await supabase.from("arc_beats").delete().eq("id", beat.id);
+    setBeats(p => p.filter(b => b.id !== beat.id));
+    setDeps(p => p.filter(d => d.beat_id !== beat.id && d.requires_beat_id !== beat.id));
+    setDetailBeatEv(null);
+    setDetail(null);
+  };
+
+  const deleteDep = async (depId) => {
+    await supabase.from("beat_dependencies").delete().eq("id", depId);
+    setDeps(p => p.filter(d => d.id !== depId));
   };
 
   const reorderArcBeat = async (beatId, targetId, arcId) => {
@@ -299,6 +334,20 @@ export default function ArcPlanner() {
     const upd = r.map((e, i) => ({ id: e.id, sort_order: i }));
     await Promise.all(upd.map(u => supabase.from("chapter_plan").update({ sort_order: u.sort_order }).eq("id", u.id)));
     setEvents(r.map((e, i) => ({ ...e, sort_order: i })));
+  };
+
+  const deleteArc = async (arc) => {
+    const arcBeatIds = beats.filter(b => b.arc_id === arc.id).map(b => b.id);
+    if (arcBeatIds.length) {
+      await supabase.from("beat_dependencies").delete().in("beat_id", arcBeatIds);
+      await supabase.from("beat_dependencies").delete().in("requires_beat_id", arcBeatIds);
+      await supabase.from("arc_beats").delete().eq("arc_id", arc.id);
+    }
+    await supabase.from("arcs").delete().eq("id", arc.id);
+    setArcs(p => p.filter(a => a.id !== arc.id));
+    setBeats(p => p.filter(b => b.arc_id !== arc.id));
+    setDeps(p => p.filter(d => !arcBeatIds.includes(d.beat_id) && !arcBeatIds.includes(d.requires_beat_id)));
+    setDeleteArcConfirm(null);
   };
 
   // ── Drag ──────────────────────────────────────────────────────────────────
@@ -326,30 +375,32 @@ export default function ArcPlanner() {
 
   // ── Beat card ─────────────────────────────────────────────────────────────
   const renderBeat = (beat, inArc = true) => {
-    const av = beat.status === "available";
-    const wt = beat.status === "waiting";
+    const blk = blockingBeats(beat.id);
+    const locked = blk.length > 0;
     const st = ST[beat.status] || ST.waiting;
-    const blk = wt ? blockingTitles(beat.id) : [];
     const isDropTarget = dropOn === beat.id && drag?.srcArc === beat.arc_id;
     return (
       <div key={beat.id}
         style={{ margin:"3px 8px 3px 20px", padding:"6px 8px", borderRadius:4,
-          background: wt ? BG_L : BG_C,
+          background: locked ? BG_L : BG_C,
           border:`1px solid ${isDropTarget ? A : BDR2}`,
-          opacity: wt ? 0.55 : 1,
-          cursor: av ? "grab" : "default",
+          opacity: locked ? 0.55 : 1,
+          cursor: locked ? "default" : "grab",
           fontFamily:FF }}
-        draggable={av}
-        onDragStart={av ? e => onBeatDragStart(e, beat) : undefined}
+        draggable={!locked}
+        onDragStart={!locked ? e => onBeatDragStart(e, beat) : undefined}
         onDragOver={inArc ? e => { e.preventDefault(); setDropOn(beat.id); } : undefined}
         onDragLeave={inArc ? () => setDropOn(null) : undefined}
         onDrop={inArc ? e => onArcBeatDrop(e, beat.id, beat.arc_id) : undefined}
         onClick={() => setDetail({ type:"beat", id:beat.id })}
-        title={wt && blk.length ? `Blocked by: ${blk.join(", ")}` : undefined}
       >
         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-          {wt && <span style={{ fontSize:9, color:TXT3 }}>🔒</span>}
-          <span style={{ flex:1, fontSize:12, color: wt ? TXT3 : TXT, fontWeight: av ? 500 : 400 }}>{beat.title}</span>
+          {locked && (
+            <span
+              title={blk.map(b => `Requires: ${b.beatTitle} (${b.arcTitle})`).join("\n")}
+              style={{ fontSize:9, color:TXT3, cursor:"help", flexShrink:0 }}>🔒</span>
+          )}
+          <span style={{ flex:1, fontSize:12, color: locked ? TXT3 : TXT, fontWeight: locked ? 400 : 500 }}>{beat.title}</span>
           <Badge color={st.color}>{DEP_LABEL[beat.dependency_type] || beat.dependency_type}</Badge>
         </div>
       </div>
@@ -378,7 +429,7 @@ export default function ArcPlanner() {
         onDragOver={e => { e.preventDefault(); setDropOn(ev.id); }}
         onDragLeave={() => setDropOn(null)}
         onDrop={e => onEvDrop(e, ev.id)}
-        onClick={() => setDetail({ type:"event", id:ev.id })}
+        onClick={() => setDetail(ev.beat_id ? { type:"beat", id:ev.beat_id } : { type:"event", id:ev.id })}
       >
         {/* Top line: checkbox + arc pill + title + × */}
         <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
@@ -433,11 +484,16 @@ export default function ArcPlanner() {
   };
 
   // ── Detail panel content ──────────────────────────────────────────────────
-  const detailBeat   = detail?.type==="beat"  ? beats.find(b => b.id===detail.id)   : null;
-  const detailArc    = detailBeat ? arcs.find(a => a.id===detailBeat.arc_id) : null;
-  const detailBeatEv = detailBeat ? events.find(e => e.beat_id === detailBeat.id)   : null;
-  const detailEv     = detail?.type==="event" ? events.find(e => e.id===detail.id)  : null;
-  const detailEvBeat = detailEv?.beat_id ? beats.find(b => b.id===detailEv.beat_id) : null;
+  const detailBeat = detail?.type==="beat" ? beats.find(b => b.id===detail.id) : null;
+  const detailArc  = detailBeat ? arcs.find(a => a.id===detailBeat.arc_id) : null;
+
+  useEffect(() => {
+    if (!detailBeat) { setDetailBeatEv(null); return; }
+    const local = events.find(e => e.beat_id === detailBeat.id);
+    if (local) { setDetailBeatEv(local); return; }
+    supabase.from("chapter_plan").select("*").eq("beat_id", detailBeat.id).maybeSingle()
+      .then(({ data }) => setDetailBeatEv(data || null));
+  }, [detailBeat?.id]); // eslint-disable-line
 
   // ── Lore by category ─────────────────────────────────────────────────────
   const loreGroups = {};
@@ -513,6 +569,15 @@ export default function ArcPlanner() {
                           background:"transparent" }}
                         onClick={() => setCollapsed(p => ({ ...p, [arc.id]: !p[arc.id] }))}>
                         <span style={{ flex:1, fontSize:12, fontWeight:600, color:col }}>{arc.title}</span>
+                        <button
+                          onClick={e => { e.stopPropagation(); setDeleteArcConfirm(arc); }}
+                          title="Delete arc"
+                          style={{ background:"none", border:"none", color:TXT3, fontSize:13, lineHeight:1,
+                            cursor:"pointer", padding:"0 2px", opacity:0.45, flexShrink:0 }}>
+                          <svg width="11" height="13" viewBox="0 0 11 13" fill="currentColor">
+                            <path d="M1 3h9M4 3V1.5h3V3M2 3l.7 8.5h5.6L9 3H2z" stroke="currentColor" strokeWidth="1" fill="none" strokeLinecap="round"/>
+                          </svg>
+                        </button>
                         <span style={{ fontSize:10, color:TXT3 }}>{isCol ? "›" : "▾"}</span>
                       </div>
                       {!isCol && (
@@ -654,35 +719,14 @@ export default function ArcPlanner() {
 
               {detailBeat && (
                 <>
-                  <div style={{ fontSize:13, fontWeight:600, color:TXT, marginBottom:6 }}>{detailBeat.title}</div>
+                  <div style={{ fontSize:13, fontWeight:600, color:TXT, marginBottom:6 }}>{detailBeat.title || "Untitled"}</div>
                   {detailArc && <Badge color={arcColor(detailArc, chars, groups)}>{detailArc.title}</Badge>}
                   <Badge color={ST[detailBeat.status]?.color||TXT3}>{detailBeat.status}</Badge>
-
-                  <Lbl>Dependency Type</Lbl>
-                  <div style={{ fontSize:12, color:TXT2 }}>{DEP_LABEL[detailBeat.dependency_type] || detailBeat.dependency_type}</div>
-
-                  {deps.filter(d => d.beat_id===detailBeat.id).length > 0 && (
-                    <>
-                      <Lbl>Depends On</Lbl>
-                      {deps.filter(d => d.beat_id===detailBeat.id).map(dep => {
-                        const rb = beats.find(b => b.id===dep.requires_beat_id);
-                        return (
-                          <div key={dep.id} style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
-                            <span style={{ fontSize:10, color: rb?.status==="complete"?"#3a7a4a":"#a04040" }}>
-                              {rb?.status==="complete" ? "✓" : "○"}
-                            </span>
-                            <span style={{ fontSize:12, color:TXT2, flex:1 }}>{rb?.title||"?"}</span>
-                            <Badge color={TXT3}>{dep.dependency_strength}</Badge>
-                          </div>
-                        );
-                      })}
-                    </>
-                  )}
 
                   {detailBeat.notes && (
                     <>
                       <Lbl>Notes</Lbl>
-                      <div style={{ fontSize:12, color:TXT2, lineHeight:1.6 }}>{detailBeat.notes}</div>
+                      <div style={{ fontSize:12, color:TXT2, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{detailBeat.notes}</div>
                     </>
                   )}
 
@@ -698,117 +742,114 @@ export default function ArcPlanner() {
                     </>
                   )}
 
-                  {detailBeatEv && (
-                    <div style={{ marginTop:20, display:"flex", flexDirection:"column", gap:6 }}>
+                  {detailBeatEv && evLoreFor(detailBeatEv.id).length > 0 && (
+                    <>
+                      <Lbl>Attached Lore</Lbl>
+                      <div style={{ display:"flex", flexWrap:"wrap", gap:2 }}>
+                        {evLoreFor(detailBeatEv.id).map(l => <Badge key={l.id} color="#2a6a94">{l.title}</Badge>)}
+                      </div>
+                    </>
+                  )}
+
+                  <div style={{ marginTop:20, display:"flex", flexDirection:"column", gap:6 }}>
+                    {detailBeatEv && (
                       <button
                         onClick={() => removeEvFromScene(detailBeatEv)}
                         style={{ background:BG_C, border:`1px solid ${BDR2}`, borderRadius:4, color:TXT2,
                           fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
                         Remove from Scene
                       </button>
-                      <button
-                        onClick={() => completeArcBeat(detailBeatEv)}
-                        style={{ background:"#3a7a4a10", border:"1px solid #3a7a4a40", borderRadius:4, color:"#3a7a4a",
-                          fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
-                        Complete
-                      </button>
-                      <button
-                        onClick={() => deleteArcBeat(detailBeatEv)}
-                        style={{ background:"none", border:"1px solid rgba(160,60,60,0.35)", borderRadius:4, color:"#a03c3c",
-                          fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {detailEv && (
-                <>
-                  <div style={{ fontSize:13, fontWeight:600, color:TXT, marginBottom:6 }}>{detailEv.title||"Untitled"}</div>
-
-                  {detailEvBeat && (() => {
-                    const arc = arcs.find(a => a.id===detailEvBeat.arc_id);
-                    const col = arc ? arcColor(arc, chars, groups) : TXT3;
-                    return (
-                      <>
-                        <Lbl>Fulfills Beat</Lbl>
-                        <div style={{ fontSize:12, color:TXT2, marginBottom:4 }}>{detailEvBeat.title}</div>
-                        {arc && <Badge color={col}>{arc.title}</Badge>}
-                        {deps.filter(d => d.beat_id===detailEvBeat.id).length > 0 && (
-                          <>
-                            <Lbl>Beat Dependencies</Lbl>
-                            {deps.filter(d => d.beat_id===detailEvBeat.id).map(dep => {
-                              const rb = beats.find(b => b.id===dep.requires_beat_id);
-                              return (
-                                <div key={dep.id} style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
-                                  <span style={{ fontSize:10, color:rb?.status==="complete"?"#3a7a4a":"#a04040" }}>
-                                    {rb?.status==="complete" ? "✓" : "○"}
-                                  </span>
-                                  <span style={{ fontSize:12, color:TXT2, flex:1 }}>{rb?.title||"?"}</span>
-                                  <Badge color={TXT3}>{dep.dependency_strength}</Badge>
-                                </div>
-                              );
-                            })}
-                          </>
-                        )}
-                      </>
-                    );
-                  })()}
-
-                  {detailEv.notes && (
-                    <>
-                      <Lbl>Notes</Lbl>
-                      <div style={{ fontSize:12, color:TXT2, lineHeight:1.6, whiteSpace:"pre-wrap" }}>{detailEv.notes}</div>
-                    </>
-                  )}
-
-                  {evCharsFor(detailEv.id).length > 0 && (
-                    <>
-                      <Lbl>Characters</Lbl>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:2 }}>
-                        {evCharsFor(detailEv.id).map(c => <CharChip key={c.id} char={c} groups={groups} />)}
-                      </div>
-                    </>
-                  )}
-
-                  {evLoreFor(detailEv.id).length > 0 && (
-                    <>
-                      <Lbl>Attached Lore</Lbl>
-                      <div style={{ display:"flex", flexWrap:"wrap", gap:2 }}>
-                        {evLoreFor(detailEv.id).map(l => <Badge key={l.id} color="#2a6a94">{l.title}</Badge>)}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Action buttons */}
-                  <div style={{ marginTop:20, display:"flex", flexDirection:"column", gap:6 }}>
+                    )}
                     <button
-                      onClick={() => removeEvFromScene(detailEv)}
-                      style={{ background:BG_C, border:`1px solid ${BDR2}`, borderRadius:4, color:TXT2,
-                        fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
-                      Remove from Scene
-                    </button>
-                    <button
-                      onClick={() => completeArcBeat(detailEv)}
+                      onClick={() => completeArcBeat(detailBeat, detailBeatEv)}
                       style={{ background:"#3a7a4a10", border:"1px solid #3a7a4a40", borderRadius:4, color:"#3a7a4a",
                         fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
                       Complete
                     </button>
                     <button
-                      onClick={() => deleteArcBeat(detailEv)}
+                      onClick={() => deleteDetailBeat(detailBeat, detailBeatEv)}
                       style={{ background:"none", border:"1px solid rgba(160,60,60,0.35)", borderRadius:4, color:"#a03c3c",
                         fontSize:12, fontFamily:FF, cursor:"pointer", padding:"6px 10px", textAlign:"left" }}>
                       Delete
                     </button>
                   </div>
+
+                  {(() => {
+                    const blockedBy = deps.filter(d => d.beat_id === detailBeat.id);
+                    const blocks    = deps.filter(d => d.requires_beat_id === detailBeat.id);
+                    if (!blockedBy.length && !blocks.length) return null;
+                    const depRow = (dep, labelBeatId) => {
+                      const b = beats.find(x => x.id === labelBeatId);
+                      const a = b ? arcs.find(x => x.id === b.arc_id) : null;
+                      return (
+                        <div key={dep.id} style={{ display:"flex", alignItems:"center", gap:5, marginBottom:3 }}>
+                          <span style={{ fontSize:12, color:TXT2, flex:1 }}>
+                            {b?.title || "?"}{a ? <span style={{ color:TXT3 }}> — {a.title}</span> : null}
+                          </span>
+                          <button onClick={() => deleteDep(dep.id)}
+                            style={{ background:"none", border:"none", color:TXT3, fontSize:13, cursor:"pointer", lineHeight:1, padding:"0 2px", flexShrink:0 }}>×</button>
+                        </div>
+                      );
+                    };
+                    return (
+                      <div style={{ marginTop:16, borderTop:`1px solid ${BDR}`, paddingTop:12 }}>
+                        <Lbl>Dependency Type</Lbl>
+                        <div style={{ fontSize:12, color:TXT2, marginBottom:8 }}>{DEP_LABEL[detailBeat.dependency_type] || detailBeat.dependency_type}</div>
+                        {blockedBy.length > 0 && (
+                          <>
+                            <Lbl>Blocked by</Lbl>
+                            {blockedBy.map(d => depRow(d, d.requires_beat_id))}
+                          </>
+                        )}
+                        {blocks.length > 0 && (
+                          <>
+                            <Lbl>Blocks</Lbl>
+                            {blocks.map(d => depRow(d, d.beat_id))}
+                          </>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
+
 
             </div>
           </div>
         )}
       </div>
+
+      {deleteArcConfirm && createPortal(
+        <>
+          <div onClick={() => setDeleteArcConfirm(null)}
+            style={{ position:"fixed", inset:0, zIndex:1000, background:"rgba(0,0,0,0.35)" }} />
+          <div style={{ position:"fixed", top:"50%", left:"50%", transform:"translate(-50%,-50%)",
+            zIndex:1001, background:BG_C, border:`1px solid ${BDR2}`, borderRadius:6,
+            padding:"24px 28px", minWidth:340, maxWidth:440,
+            boxShadow:"0 8px 32px rgba(0,0,0,0.22)", fontFamily:FF }}>
+            <div style={{ fontSize:14, fontWeight:600, color:TXT, marginBottom:10 }}>
+              Delete {deleteArcConfirm.title}?
+            </div>
+            <div style={{ fontSize:13, color:TXT2, lineHeight:1.6, marginBottom:22 }}>
+              All arc beats and their dependencies will be removed. This cannot be undone.
+            </div>
+            <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
+              <button onClick={() => setDeleteArcConfirm(null)}
+                style={{ background:"none", border:`1px solid ${BDR2}`, borderRadius:4, color:TXT2,
+                  fontSize:12, fontFamily:FF, padding:"6px 16px", cursor:"pointer" }}>
+                Cancel
+              </button>
+              <button onClick={() => deleteArc(deleteArcConfirm)}
+                style={{ background:"rgba(160,60,60,0.1)", border:"1px solid rgba(160,60,60,0.5)",
+                  borderRadius:4, color:"#a03c3c", fontSize:12, fontFamily:FF,
+                  padding:"6px 18px", cursor:"pointer", fontWeight:600 }}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }

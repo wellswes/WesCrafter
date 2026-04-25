@@ -75,8 +75,9 @@ function ProseViewer() {
   const [planOpen,             setPlanOpen]             = useState(false);
   const [planDraft,            setPlanDraft]            = useState("");
   const [planPos,              setPlanPos]              = useState({ x: 440, y: 80 });
-  const planDragRef  = useRef(null);
-  const planPanelRef = useRef(null);
+  const planDragRef        = useRef(null);
+  const planPanelRef       = useRef(null);
+  const planScrollDebounce = useRef(null);
   const [activeBeatId,   setActiveBeatId]   = useState(null);
   const prevActiveBeatIdRef = useRef(null);
   const leftPanelRef  = useRef(null);
@@ -710,6 +711,7 @@ function ProseViewer() {
   const loadBeatSnap = (beat) => {
     console.log("loadBeatSnap beat:", beat.id, "snap_active_character_ids:", beat.snap_active_character_ids);
     const hasSnap = beat.snap_location_id || beat.snap_time_of_day ||
+                    beat.snap_weather || beat.snap_season ||
                     beat.snap_scene_mode || beat.snap_active_character_ids?.length ||
                     beat.snap_pov_character_id ||
                     (beat.snap_outfit_tags && Object.keys(beat.snap_outfit_tags).length);
@@ -856,7 +858,7 @@ function ProseViewer() {
                   {beats.length === 0
                     ? <div style={{ color:"var(--text4)", fontStyle:"italic", fontSize:13, fontFamily:"sans-serif" }}>No beats for this scene yet.</div>
                     : <div style={{ fontSize:20, lineHeight:2.0, color:"#1a2a3a", fontFamily:"Georgia, serif", whiteSpace:"pre-wrap", textAlign:"left" }}>
-                        {beats.filter(b => b.prose_text).map((b, i, arr) => {
+                        {beats.filter(b => b.prose_text || b.id === editingBeatId).map((b, i, arr) => {
                           const prev = arr[i - 1];
                           const stateChanged = i > 0 && prev && (
                             JSON.stringify(b.snap_active_character_ids?.slice().sort()) !==
@@ -877,7 +879,19 @@ function ProseViewer() {
                                 <div style={{ height:1, flex:1, background:"rgba(0,0,0,0.12)" }}/>
                               </div>
                             )}
-                            {<span
+                            {editingBeatId === b.id
+                              ? <textarea
+                                  ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+                                  value={editingText}
+                                  autoFocus
+                                  onChange={e => {
+                                    setEditingText(e.target.value);
+                                    e.target.style.height = "auto";
+                                    e.target.style.height = e.target.scrollHeight + "px";
+                                  }}
+                                  style={{ width:"100%", background:"transparent", border:"none", outline:"none", resize:"none", overflow:"hidden", fontSize:20, lineHeight:2.0, fontFamily:"Georgia, serif", color:"#1a2a3a", padding:0, margin:0, display:"block", boxSizing:"border-box" }}
+                                />
+                              : <span
                                   onClick={() => {
                                     setActiveBeatId(b.id);
                                     loadBeatSnap(b);
@@ -966,6 +980,20 @@ function ProseViewer() {
                         </div>
                       </>
                   }
+                </div>
+              )}
+              {editingBeatId && !pendingProse && (
+                <div style={{ position:"sticky", bottom:0, padding:"10px 0", display:"flex", gap:10, justifyContent:"flex-end", zIndex:10, pointerEvents:"none" }}>
+                  <button
+                    onClick={() => saveBeatProse(editingBeatId, editingText)}
+                    style={{ pointerEvents:"auto", background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor:"pointer", fontWeight:"bold", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingBeatId(null)}
+                    style={{ pointerEvents:"auto", background:"#ffffff", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,0.15)" }}>
+                    Cancel
+                  </button>
                 </div>
               )}
             </div>
@@ -1062,8 +1090,16 @@ function ProseViewer() {
             </div>
             <textarea
               autoFocus
+              ref={el => { if (el) el.scrollTop = parseInt(localStorage.getItem("chapterPlanScroll") || "0", 10); }}
               value={planDraft}
               onChange={e => setPlanDraft(e.target.value)}
+              onScroll={e => {
+                const top = e.target.scrollTop;
+                clearTimeout(planScrollDebounce.current);
+                planScrollDebounce.current = setTimeout(() => {
+                  localStorage.setItem("chapterPlanScroll", top);
+                }, 200);
+              }}
               onBlur={async () => {
                 if (!selCh) return;
                 await supabase.from("chapters").update({ chapter_plan: planDraft || null }).eq("id", selCh);
@@ -1113,43 +1149,6 @@ function ProseViewer() {
           />
         ) : null;
       })()}
-      {editingBeatId && createPortal(
-        <div style={{ position:"fixed", inset:0, zIndex:9999, background:"rgba(0,12,28,0.96)", display:"flex", flexDirection:"column", padding:"40px 60px" }}>
-          <textarea
-            value={editingText}
-            onChange={e => setEditingText(e.target.value)}
-            autoFocus
-            style={{ flex:1, width:"100%", background:"#0d1b2e", color:"#c8e0ff", border:"1px solid #3b7fd4", borderRadius:6, fontSize:16, lineHeight:2.0, fontFamily:"Georgia, serif", padding:"24px 32px", resize:"none", outline:"none" }}
-          />
-          <div style={{ display:"flex", gap:12, marginTop:16, justifyContent:"flex-end" }}>
-            <button
-              onClick={() => {
-                if (!window.confirm("Delete this beat?")) return;
-                const beatId = editingBeatId;
-                supabase.from("beats").delete().eq("id", beatId).then(() => {
-                  setScenesWithBeats(prev => prev.map(s => ({
-                    ...s, beats: s.beats.filter(x => x.id !== beatId),
-                  })));
-                  setEditingBeatId(null);
-                });
-              }}
-              style={{ background:"none", border:"1px solid #552222", borderRadius:4, color:"#cc6666", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
-              Delete
-            </button>
-            <button
-              onClick={() => setEditingBeatId(null)}
-              style={{ background:"none", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:12, fontFamily:"sans-serif", padding:"6px 16px", cursor:"pointer" }}>
-              Cancel
-            </button>
-            <button
-              onClick={() => saveBeatProse(editingBeatId, editingText)}
-              style={{ background:"var(--gold2)", border:"1px solid var(--gold)", borderRadius:4, color:"#1a1410", fontSize:12, fontFamily:"sans-serif", padding:"6px 20px", cursor:"pointer", fontWeight:"bold" }}>
-              Save
-            </button>
-          </div>
-        </div>,
-        document.body
-      )}
     </>
   );
 }
