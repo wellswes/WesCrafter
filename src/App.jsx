@@ -9,6 +9,7 @@ import WritePanel from "./WritePanel.jsx";
 import LeftPanel from "./LeftPanel.jsx";
 import StoryMap from "./StoryMap.jsx";
 import ArcPlanner from "./ArcPlanner.jsx";
+import SpriteStudio from "./SpriteStudio.jsx";
 import ProcessChapterPanel from "./ProcessChapterPanel.jsx";
 import UpdateCodexPanel from "./UpdateCodexPanel.jsx";
 import ImportPanel from "./ImportPanel.jsx";
@@ -1162,6 +1163,7 @@ export default function App() {
       <Route path="/debug" element={<SnapDebug />} />
       <Route path="/map" element={<StoryMap />} />
       <Route path="/arc" element={<ArcPlanner />} />
+      <Route path="/sprites" element={<SpriteStudio />} />
     </Routes>
   );
 }

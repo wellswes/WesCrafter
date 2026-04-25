@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "./supabase.js";
 
 const WORLD_ID   = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
@@ -61,7 +61,7 @@ const S = {
 
 const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
 
-const TABS         = ["Core", "Erotic", "Combat", "Sprites", "Relationships"];
+const TABS         = ["Core", "Erotic", "Combat", "Relationships"];
 const ROLES        = ["owner", "worker", "resident", "regular", "visitor"];
 
 const PRESENCE     = { regular:70, visitor:30 };
@@ -243,7 +243,6 @@ function DetailPanel({ char, onCharUpdate }) {
   const [tab,        setTab]        = useState("Core");
   const [erotic,     setErotic]     = useState(undefined);
   const [combat,     setCombat]     = useState(undefined);
-  const [sprites,    setSprites]    = useState(null);
   const [rels,       setRels]       = useState(null);
   const [relsChars,  setRelsChars]  = useState({});
   const [loading,    setLoading]    = useState(false);
@@ -253,14 +252,10 @@ function DetailPanel({ char, onCharUpdate }) {
   const [nameDraft,   setNameDraft]   = useState(char.name);
   // alias add
   const [newAlias,    setNewAlias]    = useState("");
-  // sprite add form
-  const [spriteUrl,     setSpriteUrl]     = useState("");
-  const [spriteLabel,   setSpriteLabel]   = useState("default");
-  const [spriteDefault, setSpriteDefault] = useState(false);
 
   useEffect(() => {
     setTab("Core"); setErotic(undefined); setCombat(undefined);
-    setSprites(null); setRels(null); setRelsChars({});
+    setRels(null); setRelsChars({});
     setLoading(true);
     setEditingName(false); setNameDraft(char.name); setNewAlias("");
     Promise.all([
@@ -270,15 +265,9 @@ function DetailPanel({ char, onCharUpdate }) {
   }, [char.id]);
 
   useEffect(() => {
-    if (tab === "Sprites" && sprites === null) loadSprites();
     if (tab === "Relationships" && rels === null) loadRels();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab]);
-
-  const loadSprites = async () => {
-    const { data } = await supabase.from("character_sprites").select("*").eq("character_id", char.id).order("is_default", { ascending: false });
-    setSprites(data || []);
-  };
 
   const loadRels = async () => {
     const { data: rows } = await supabase
@@ -340,44 +329,6 @@ function DetailPanel({ char, onCharUpdate }) {
     const updated = (char.aliases || []).filter((_, i) => i !== idx);
     await supabase.from("characters").update({ aliases: updated }).eq("id", char.id);
     onCharUpdate({ ...char, aliases: updated });
-  };
-
-  // ── sprite saves ──
-  const addSprite = async () => {
-    if (!spriteUrl.trim()) return;
-    const isDefault = spriteDefault || (sprites || []).length === 0;
-    if (isDefault) {
-      await supabase.from("character_sprites").update({ is_default: false }).eq("character_id", char.id);
-    }
-    await supabase.from("character_sprites").insert({
-      character_id: char.id,
-      portrait_url: spriteUrl.trim(),
-      label: spriteLabel.trim() || "default",
-      is_default: isDefault,
-    });
-    if (isDefault) {
-      await supabase.from("characters").update({ portrait_url: spriteUrl.trim() }).eq("id", char.id);
-      onCharUpdate({ ...char, portrait_url: spriteUrl.trim() });
-    }
-    setSpriteUrl(""); setSpriteLabel("default"); setSpriteDefault(false);
-    loadSprites();
-  };
-
-  const setDefaultSprite = async (sprite) => {
-    await supabase.from("character_sprites").update({ is_default: false }).eq("character_id", char.id);
-    await supabase.from("character_sprites").update({ is_default: true }).eq("id", sprite.id);
-    await supabase.from("characters").update({ portrait_url: sprite.portrait_url }).eq("id", char.id);
-    onCharUpdate({ ...char, portrait_url: sprite.portrait_url });
-    loadSprites();
-  };
-
-  const deleteSprite = async (sprite) => {
-    await supabase.from("character_sprites").delete().eq("id", sprite.id);
-    if (sprite.is_default) {
-      await supabase.from("characters").update({ portrait_url: null }).eq("id", char.id);
-      onCharUpdate({ ...char, portrait_url: null });
-    }
-    loadSprites();
   };
 
   const color       = char.link_color || "#7a6e62";
@@ -479,60 +430,6 @@ function DetailPanel({ char, onCharUpdate }) {
                 await supabase.from("character_combat").upsert({ [key]: val, character_id: char.id }, { onConflict:"character_id" });
                 setCombat(prev => ({ ...(prev||{}), [key]: val, character_id: char.id }));
               }} />
-        )}
-
-        {/* sprites tab */}
-        {tab === "Sprites" && (
-          <div>
-            <div style={{ background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, padding:"12px 14px", marginBottom:16 }}>
-              <div style={{ fontSize:10, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", marginBottom:10 }}>Add Sprite</div>
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                <input
-                  value={spriteUrl}
-                  onChange={e => setSpriteUrl(e.target.value)}
-                  placeholder="Portrait URL"
-                  style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, fontFamily:"sans-serif", padding:"6px 10px", outline:"none" }}
-                />
-                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                  <input
-                    value={spriteLabel}
-                    onChange={e => setSpriteLabel(e.target.value)}
-                    placeholder="Label (default, combat…)"
-                    style={{ flex:1, minWidth:120, background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text)", fontSize:12, fontFamily:"sans-serif", padding:"6px 10px", outline:"none" }}
-                  />
-                  <label style={{ display:"flex", alignItems:"center", gap:5, fontSize:12, fontFamily:"sans-serif", color:"var(--text3)", cursor:"pointer", flexShrink:0 }}>
-                    <input type="checkbox" checked={spriteDefault} onChange={e => setSpriteDefault(e.target.checked)} />
-                    Set as default
-                  </label>
-                  <button onClick={addSprite} style={{ ...taBtn, color:"var(--gold)", borderColor:"var(--gold2)", flexShrink:0 }}>Add</button>
-                </div>
-              </div>
-            </div>
-            {sprites === null
-              ? <div style={S.msg}>Loading…</div>
-              : sprites.length === 0
-              ? <div style={S.msg}>No sprites yet.</div>
-              : <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                  {sprites.map(sp => (
-                    <div key={sp.id} style={{ display:"flex", alignItems:"center", gap:12, background:"var(--bg2)", border:"1px solid var(--border2)", borderRadius:6, padding:"10px 12px" }}>
-                      <img src={sp.portrait_url} alt={sp.label} style={{ width:56, height:56, objectFit:"cover", borderRadius:4, border:`2px solid ${sp.is_default ? "var(--gold)" : "var(--border2)"}`, flexShrink:0 }} />
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:13, fontFamily:"sans-serif", color:"var(--text)", marginBottom:4 }}>{sp.label || "—"}</div>
-                        {sp.is_default && (
-                          <span style={{ fontSize:9, fontFamily:"sans-serif", letterSpacing:"0.1em", textTransform:"uppercase", background:"#2a2010", border:"1px solid var(--gold2)", borderRadius:3, color:"var(--gold)", padding:"1px 6px" }}>default</span>
-                        )}
-                      </div>
-                      <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                        {!sp.is_default && (
-                          <button onClick={() => setDefaultSprite(sp)} style={taBtn}>Set Default</button>
-                        )}
-                        <button onClick={() => deleteSprite(sp)} style={{ ...taBtn, color:"#c07060", borderColor:"#3a2020" }}>Delete</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-            }
-          </div>
         )}
 
         {/* relationships tab */}
@@ -1099,6 +996,7 @@ function LoreModal({ entry, onClose, onUpdate, onDelete }) {
 
 // ── Codex ────────────────────────────────────────────────────────────────────
 export default function Codex() {
+  const navigate       = useNavigate();
   const [section,      setSection]      = useState("characters");
   const [charSidebarW, setCharSidebarW] = useState(() => {
     const saved = localStorage.getItem("codex_sidebar_width_characters");
@@ -1330,6 +1228,7 @@ export default function Codex() {
                 }}>{s}</button>
               ))}
               <a href="/arc" style={{ ...S.secBtn, color:"var(--text4)", textDecoration:"none", borderBottom:"2px solid transparent", display:"flex", alignItems:"center" }}>arcs</a>
+              <a href="/sprites" style={{ ...S.secBtn, color:"var(--text4)", textDecoration:"none", borderBottom:"2px solid transparent", display:"flex", alignItems:"center" }}>sprites</a>
             </div>
 
             {phase === "loading" && <div style={{...S.msg, padding:"24px 14px"}}>Loading…</div>}
@@ -1358,14 +1257,20 @@ export default function Codex() {
                         const isActive = selected?.id === c.id;
                         return (
                           <div key={c.id} draggable onDragStart={e => onCharDragStart(e, c.id)} onDragEnd={onDragEnd}
-                            style={{ ...S.charRow, background: isActive ? "var(--bg4)" : "transparent", color }}
+                            style={{ ...S.charRow, background: isActive ? "var(--bg4)" : "transparent", color, padding:"6px 6px 6px 8px" }}
                             onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = "var(--bg3)"; }}
                             onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
                             onClick={() => setSelected(c)}>
-                            {c.portrait_url
-                              ? <img src={c.portrait_url} alt={c.name} style={{ width:28, height:28, borderRadius:"50%", objectFit:"cover", border:`1.5px solid ${color}`, flexShrink:0 }} />
-                              : <div style={{ width:28, height:28, borderRadius:"50%", background:color+"22", border:`1.5px solid ${color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color, fontFamily:"sans-serif", fontWeight:"bold", flexShrink:0 }}>{c.name[0]}</div>
-                            }
+                            <div
+                              onClick={e => { e.stopPropagation(); navigate(`/sprites?character=${c.id}`); }}
+                              title="Sprite Studio"
+                              style={{ width:36, height:36, borderRadius:4, flexShrink:0, cursor:"pointer", overflow:"hidden", border:"1px solid var(--border2)", background:"var(--bg3)", display:"flex", alignItems:"center", justifyContent:"center" }}
+                            >
+                              {c.portrait_url
+                                ? <img src={c.portrait_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                                : <span style={{ fontSize:15, color:"var(--text4)" }}>📷</span>
+                              }
+                            </div>
                             {c.name}
                           </div>
                         );
