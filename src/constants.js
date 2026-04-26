@@ -1,9 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
-
-export const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-);
+import { supabase } from "./supabase.js";
+export { supabase };
 
 export const STORY_ID = "ca821271-2bca-4b3c-bdf7-7224e0b4e8b3";
 export const WORLD_ID = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
