@@ -440,7 +440,15 @@ export default function SpriteStudio() {
       }
       setUploadStatus("Uploading…");
 
-      const cleanFilename = seedMatch ? `${prefix}_s-${seedMatch[1]}${ext}` : `${prefix}${ext}`;
+      // Insert expression slug before _x suffix (if any)
+      const expSlug = expression
+        ? expression.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
+        : "";
+      const taggedPrefix = expSlug
+        ? (/_x$/i.test(prefix) ? prefix.replace(/_x$/i, `_${expSlug}_x`) : `${prefix}_${expSlug}`)
+        : prefix;
+
+      const cleanFilename = seedMatch ? `${taggedPrefix}_s-${seedMatch[1]}${ext}` : `${taggedPrefix}${ext}`;
       const path          = `${STORY_ID}/${charSlug}/${cleanFilename}`;
 
       const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, uploadFile, { upsert: true });
