@@ -223,7 +223,6 @@ export default function SpriteStudio() {
   const [mode,         setMode]         = useState("SFW");
   const [pose,         setPose]         = useState("Face Seed");
   const [bust,         setBust]         = useState("");
-  const [clipType,     setClipType]     = useState("idle");
 
   // wardrobe
   const [wardrobe,            setWardrobe]            = useState([]);
@@ -582,18 +581,6 @@ export default function SpriteStudio() {
     return parts.filter(Boolean).join(", ");
   };
 
-  const buildFilename = () => {
-    if (!selected) return "";
-    const slug          = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const poseSlug      = pose.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const outfitItem    = wardrobe.find(w => w.id === selectedOutfit);
-    const outfitSlug    = outfitItem?.prompt_shortcode || "";
-    const explicitSuffix = mode === "Explicit" ? "_x" : "";
-    const parts         = [slug, poseSlug, outfitSlug].filter(Boolean).join("_");
-    const prefix        = `${parts}${explicitSuffix}`;
-    return `${prefix}_01.png`;
-  };
-
   const toggleCollapse = (grpName) => {
     setCollapsed(prev => {
       const n = new Set(prev);
@@ -617,9 +604,8 @@ export default function SpriteStudio() {
     ? Object.keys(groupMap)
     : groupOrder.filter(g => groupMap[g]?.length);
 
-  const prompt     = buildPrompt();
-  const filename   = buildFilename();
-  const poseData   = POSE_OPTIONS[pose];
+  const prompt    = buildPrompt();
+  const poseData  = POSE_OPTIONS[pose];
   const negPrompt  = selected?.novelai_negative
     ? `${NEGATIVE_PROMPT}, ${selected.novelai_negative}`
     : NEGATIVE_PROMPT;
@@ -922,19 +908,35 @@ export default function SpriteStudio() {
                     <textarea readOnly value={negPrompt} rows={2} style={{ width: "100%", background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", lineHeight: 1.6, padding: "8px 10px", resize: "vertical", outline: "none" }} />
                   </div>
 
-                  {/* Filename */}
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                      <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>Suggested Filename</div>
-                      <CopyButton text={filename} />
+                </div>
+
+                {/* upload zone */}
+                <div style={{ marginBottom: 28 }}>
+                  <div style={secLbl}>Upload</div>
+                  <div
+                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(Array.from(e.dataTransfer.files)); }}
+                    onClick={() => !uploading && fileInputRef.current?.click()}
+                    style={{
+                      border: `2px dashed ${dragOver ? "var(--gold)" : "var(--border2)"}`,
+                      borderRadius: 8, padding: 32, textAlign: "center",
+                      cursor: uploading ? "default" : "pointer",
+                      background: dragOver ? "var(--bg4)" : "var(--bg3)",
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    <div style={{ fontSize: 13, color: "var(--text4)", fontFamily: "sans-serif", marginBottom: 6 }}>
+                      {uploading ? uploadStatus : "Drop PNG, WebM, or APNG here"}
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <div style={{ flex: 1, background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "monospace", padding: "7px 10px" }}>{filename}</div>
-                      <select value={clipType} onChange={e => setClipType(e.target.value)}
-                        style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 8px", cursor: "pointer", outline: "none" }}>
-                        {CLIP_TYPES.map(ct => <option key={ct} value={ct}>{ct}</option>)}
-                      </select>
-                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text4)", fontFamily: "sans-serif" }}>or click to browse · max 10MB</div>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".png,.webm,.apng,image/png,video/webm,image/apng"
+                      style={{ display: "none" }}
+                      onChange={e => { handleFiles(Array.from(e.target.files)); e.target.value = ""; }}
+                    />
                   </div>
                 </div>
 
@@ -943,7 +945,7 @@ export default function SpriteStudio() {
                   <div style={secLbl}>Sprites ({sprites.length})</div>
                   {sprites.length === 0 ? (
                     <div style={{ color: "var(--text4)", fontStyle: "italic", fontSize: 13, fontFamily: "sans-serif", padding: "12px 0" }}>
-                      No sprites yet — generate in NovelAI and drop them below
+                      No sprites yet — generate in NovelAI and drop them above
                     </div>
                   ) : (
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(148px, 1fr))", gap: 12 }}>
@@ -976,36 +978,6 @@ export default function SpriteStudio() {
                       ))}
                     </div>
                   )}
-                </div>
-
-                {/* upload zone */}
-                <div>
-                  <div style={secLbl}>Upload</div>
-                  <div
-                    onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(Array.from(e.dataTransfer.files)); }}
-                    onClick={() => !uploading && fileInputRef.current?.click()}
-                    style={{
-                      border: `2px dashed ${dragOver ? "var(--gold)" : "var(--border2)"}`,
-                      borderRadius: 8, padding: 32, textAlign: "center",
-                      cursor: uploading ? "default" : "pointer",
-                      background: dragOver ? "var(--bg4)" : "var(--bg3)",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    <div style={{ fontSize: 13, color: "var(--text4)", fontFamily: "sans-serif", marginBottom: 6 }}>
-                      {uploading ? uploadStatus : "Drop PNG, WebM, or APNG here"}
-                    </div>
-                    <div style={{ fontSize: 11, color: "var(--text4)", fontFamily: "sans-serif" }}>or click to browse · max 10MB</div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept=".png,.webm,.apng,image/png,video/webm,image/apng"
-                      style={{ display: "none" }}
-                      onChange={e => { handleFiles(Array.from(e.target.files)); e.target.value = ""; }}
-                    />
-                  </div>
                 </div>
               </>
             )}
