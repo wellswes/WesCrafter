@@ -78,6 +78,12 @@ const POSE_OPTIONS = {
     canvas: "512×640",
     method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
   },
+  "Kneeling": {
+    tags: "kneeling, submissive pose",
+    model: "Base 4.5",
+    canvas: "512×640",
+    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
+  },
   "— Background —": null,
   "Background": {
     tags: "atmospheric background, no humans",
@@ -223,6 +229,7 @@ export default function SpriteStudio() {
   const [mode,         setMode]         = useState("SFW");
   const [pose,         setPose]         = useState("Face Seed");
   const [bust,         setBust]         = useState("");
+  const [expression,   setExpression]   = useState("");
 
   // wardrobe
   const [wardrobe,            setWardrobe]            = useState([]);
@@ -536,7 +543,10 @@ export default function SpriteStudio() {
       if (!allSoFar.includes(bust.toLowerCase())) parts.push(bust);
     }
 
-    // 3c. Positive override
+    // 3c. Expression
+    if (expression) parts.push(expression);
+
+    // 3e. Positive override
     if (selected.novelai_positive) parts.push(selected.novelai_positive);
 
     // 4. Outfit prompt
@@ -797,6 +807,31 @@ export default function SpriteStudio() {
                             <option value="small breasts">small breasts</option>
                             <option value="medium breasts">medium breasts</option>
                             <option value="large breasts">large breasts</option>
+                          </select>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Expression</div>
+                          <select
+                            value={expression}
+                            onChange={e => setExpression(e.target.value)}
+                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: expression ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" }}
+                          >
+                            <option value="">(omit)</option>
+                            <option value="neutral">neutral</option>
+                            <option value="smile">smile</option>
+                            <option value="smirk">smirk</option>
+                            <option value="blush">blush</option>
+                            <option value="flustered">flustered</option>
+                            <option value="shy">shy</option>
+                            <option value="surprised">surprised</option>
+                            <option value="sad">sad</option>
+                            <option value="angry">angry</option>
+                            <option value="playful">playful</option>
+                            <option value="seductive">seductive</option>
+                            <option value="ahegao">ahegao</option>
+                            <option value="open mouth">open mouth</option>
+                            <option value="wink">wink</option>
+                            <option value=":3">:3</option>
                           </select>
                         </div>
                         {outfitItems.length > 0 && (
