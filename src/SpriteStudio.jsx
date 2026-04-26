@@ -756,39 +756,42 @@ export default function SpriteStudio() {
                     const selStyle = (active) => ({ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: active ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" });
                     const lbl = (text) => <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{text}</div>;
                     return (
-                      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
 
-                        {/* Preset */}
-                        <div>
-                          {lbl("Preset")}
-                          <select
-                            value={preset}
-                            onChange={e => {
-                              const p = PRESETS.find(p => p.label === e.target.value);
-                              if (!p) { setPreset(""); return; }
-                              setPreset(p.label);
-                              setFraming(p.framing);
-                              setBodyPose(p.pose);
-                              setExpression(p.expression);
-                            }}
-                            style={{ ...selStyle(!!preset), minWidth: 220 }}
-                          >
-                            <option value="">— pick preset —</option>
-                            {PRESET_GROUPS.map(grp => (
-                              <optgroup key={grp} label={grp}>
-                                {PRESETS.filter(p => p.group === grp).map(p => (
-                                  <option key={p.label} value={p.label}>{p.label}</option>
-                                ))}
-                              </optgroup>
-                            ))}
-                          </select>
+                        {/* Row 1: Mode + Preset */}
+                        <div style={{ display: "flex", gap: 16, alignItems: "flex-end" }}>
+                          <div>
+                            {lbl("Mode")}
+                            <ToggleGroup options={["SFW", "Explicit"]} value={mode} onChange={setMode} />
+                          </div>
+                          <div>
+                            {lbl("Preset")}
+                            <select
+                              value={preset}
+                              onChange={e => {
+                                const p = PRESETS.find(p => p.label === e.target.value);
+                                if (!p) { setPreset(""); return; }
+                                setPreset(p.label);
+                                setFraming(p.framing);
+                                setBodyPose(p.pose);
+                                setExpression(p.expression);
+                              }}
+                              style={{ ...selStyle(!!preset), minWidth: 220 }}
+                            >
+                              <option value="">— pick preset —</option>
+                              {PRESET_GROUPS.map(grp => (
+                                <optgroup key={grp} label={grp}>
+                                  {PRESETS.filter(p => p.group === grp).map(p => (
+                                    <option key={p.label} value={p.label}>{p.label}</option>
+                                  ))}
+                                </optgroup>
+                              ))}
+                            </select>
+                          </div>
                         </div>
 
-                        {/* Mode */}
-                        <div>
-                          {lbl("Mode")}
-                          <ToggleGroup options={["SFW", "Explicit"]} value={mode} onChange={setMode} />
-                        </div>
+                        {/* Row 2: Framing + rest */}
+                        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
 
                         {/* Framing */}
                         <div>
@@ -906,6 +909,7 @@ export default function SpriteStudio() {
                           </div>
                         )}
 
+                        </div>{/* end row 2 */}
                       </div>
                     );
                   })()}
