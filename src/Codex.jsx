@@ -61,7 +61,7 @@ const S = {
 
 const taBtn = { background:"none", border:"1px solid var(--border2)", borderRadius:4, cursor:"pointer", padding:"3px 10px", fontSize:11, fontFamily:"sans-serif", letterSpacing:"0.05em", color:"var(--text3)" };
 
-const TABS         = ["Core", "Erotic", "Combat", "Relationships"];
+const TABS         = ["Core", "Erotic", "Combat", "Items", "Relationships"];
 const ROLES        = ["owner", "worker", "resident", "regular", "visitor"];
 
 const PRESENCE     = { regular:70, visitor:30 };
@@ -234,6 +234,196 @@ function CoreTab({ char, onCharUpdate }) {
         </div>
       </div>
 
+    </div>
+  );
+}
+
+// ── ItemsTab ─────────────────────────────────────────────────────────────────
+function ItemsTab({ char }) {
+  const [containers,      setContainers]      = useState([]);
+  const [ownedItems,      setOwnedItems]      = useState([]);
+  const [unowned,         setUnowned]         = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [expanded,        setExpanded]        = useState(null);
+  const [drafts,          setDrafts]          = useState({});
+  const [claimSelections, setClaimSelections] = useState({});
+
+  useEffect(() => { load(); }, [char.id]);
+
+  const load = async () => {
+    setLoading(true);
+    const { data: conts } = await supabase
+      .from("containers").select("id, name").eq("character_id", char.id).order("name");
+    const contList = conts || [];
+    setContainers(contList);
+    const contIds = contList.map(c => c.id);
+    const [{ data: owned }, { data: none }] = await Promise.all([
+      contIds.length
+        ? supabase.from("items").select("id, name, container_id, visual_description, novelai_description, is_worn, is_accessory").in("container_id", contIds).order("name")
+        : { data: [] },
+      supabase.from("items").select("id, name, visual_description").is("container_id", null).order("name"),
+    ]);
+    setOwnedItems(owned || []);
+    setUnowned(none || []);
+    setLoading(false);
+  };
+
+  const getDraft = (itemId, field, fallback) => {
+    const key = `${itemId}_${field}`;
+    return drafts[key] !== undefined ? drafts[key] : (fallback ?? "");
+  };
+
+  const setDraft = (itemId, field, val) =>
+    setDrafts(p => ({ ...p, [`${itemId}_${field}`]: val }));
+
+  const saveField = async (item, field) => {
+    const key = `${item.id}_${field}`;
+    if (drafts[key] === undefined) return;
+    const val = drafts[key];
+    setDrafts(p => { const n = { ...p }; delete n[key]; return n; });
+    if (val === (item[field] ?? "")) return;
+    await supabase.from("items").update({ [field]: val || null }).eq("id", item.id);
+    setOwnedItems(prev => prev.map(i => i.id === item.id ? { ...i, [field]: val || null } : i));
+  };
+
+  const saveCheck = async (item, field, checked) => {
+    await supabase.from("items").update({ [field]: checked }).eq("id", item.id);
+    setOwnedItems(prev => prev.map(i => i.id === item.id ? { ...i, [field]: checked } : i));
+  };
+
+  const dropItem = async (item) => {
+    await supabase.from("items").update({ container_id: null }).eq("id", item.id);
+    if (expanded === item.id) setExpanded(null);
+    setOwnedItems(prev => prev.filter(i => i.id !== item.id));
+    setUnowned(prev => [...prev, { id: item.id, name: item.name, visual_description: item.visual_description }]
+      .sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
+  const claimItem = async (item, containerId) => {
+    if (!containerId) return;
+    await supabase.from("items").update({ container_id: containerId }).eq("id", item.id);
+    setUnowned(prev => prev.filter(i => i.id !== item.id));
+    setClaimSelections(p => { const n = { ...p }; delete n[item.id]; return n; });
+    const contIds = containers.map(c => c.id);
+    const { data } = await supabase.from("items")
+      .select("id, name, container_id, visual_description, novelai_description, is_worn, is_accessory")
+      .in("container_id", contIds).order("name");
+    setOwnedItems(data || []);
+  };
+
+  const ta = {
+    width:"100%", background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4,
+    color:"var(--text)", fontSize:14, fontFamily:"Georgia, serif", lineHeight:1.7,
+    padding:"8px 10px", resize:"vertical", outline:"none",
+  };
+  const fieldLbl = { fontSize:9, color:"var(--text4)", fontFamily:"sans-serif", letterSpacing:"0.08em", textTransform:"uppercase", marginBottom:4 };
+
+  if (loading) return <div style={S.msg}>Loading…</div>;
+  if (containers.length === 0 && unowned.length === 0)
+    return <div style={S.msg}>No containers or items found for this character.</div>;
+
+  const ItemRow = ({ item }) => {
+    const isOpen = expanded === item.id;
+    return (
+      <div style={{ background:"var(--bg2)", border:`1px solid ${isOpen ? "var(--border2)" : "var(--border)"}`, borderRadius:5 }}>
+        {/* collapsed row — click to expand */}
+        <div
+          onClick={() => setExpanded(isOpen ? null : item.id)}
+          style={{ display:"flex", alignItems:"center", gap:12, padding:"9px 12px", cursor:"pointer", userSelect:"none" }}
+        >
+          <span style={{ fontSize:9, color:"var(--text4)", flexShrink:0 }}>{isOpen ? "▾" : "▸"}</span>
+          <span style={{ flex:1, fontSize:13, fontFamily:"sans-serif", color:"var(--text)" }}>{item.name}</span>
+          <label onClick={e => e.stopPropagation()} style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, fontFamily:"sans-serif", color:"var(--text4)", cursor:"pointer", userSelect:"none", flexShrink:0 }}>
+            <input type="checkbox" checked={!!item.is_worn} onChange={e => saveCheck(item, "is_worn", e.target.checked)} style={{ accentColor:"var(--gold)" }} />
+            Worn
+          </label>
+          <label onClick={e => e.stopPropagation()} style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, fontFamily:"sans-serif", color:"var(--text4)", cursor:"pointer", userSelect:"none", flexShrink:0 }}>
+            <input type="checkbox" checked={!!item.is_accessory} onChange={e => saveCheck(item, "is_accessory", e.target.checked)} style={{ accentColor:"var(--gold)" }} />
+            Accessory
+          </label>
+          <button
+            onClick={e => { e.stopPropagation(); dropItem(item); }}
+            style={{ ...taBtn, fontSize:10, color:"#c07060", borderColor:"#3a2020", flexShrink:0 }}
+          >Drop</button>
+        </div>
+
+        {/* expanded — description fields */}
+        {isOpen && (
+          <div style={{ padding:"0 12px 12px", borderTop:"1px solid var(--border)", paddingTop:12, display:"flex", flexDirection:"column", gap:14 }}>
+            <div>
+              <div style={fieldLbl}>Visual Description</div>
+              <textarea
+                value={getDraft(item.id, "visual_description", item.visual_description)}
+                onChange={e => setDraft(item.id, "visual_description", e.target.value)}
+                onBlur={() => saveField(item, "visual_description")}
+                rows={4}
+                style={ta}
+              />
+            </div>
+            <div>
+              <div style={fieldLbl}>NovelAI Description</div>
+              <textarea
+                value={getDraft(item.id, "novelai_description", item.novelai_description)}
+                onChange={e => setDraft(item.id, "novelai_description", e.target.value)}
+                onBlur={() => saveField(item, "novelai_description")}
+                placeholder="NovelAI prompt description…"
+                rows={3}
+                style={ta}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:24 }}>
+      {containers.map(cont => {
+        const items = ownedItems.filter(i => i.container_id === cont.id);
+        return (
+          <div key={cont.id}>
+            <div style={{ ...S.secLbl, marginBottom:8 }}>{cont.name}</div>
+            {items.length === 0
+              ? <div style={{ fontSize:12, color:"var(--text4)", fontFamily:"sans-serif", fontStyle:"italic" }}>No items</div>
+              : <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  {items.map(item => <ItemRow key={item.id} item={item} />)}
+                </div>
+            }
+          </div>
+        );
+      })}
+
+      {unowned.length > 0 && (
+        <div style={{ borderTop:"1px solid var(--border)", paddingTop:20 }}>
+          <div style={{ ...S.secLbl, marginBottom:8, color:"var(--text4)" }}>Unowned Items</div>
+          <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+            {unowned.map(item => (
+              <div key={item.id} style={{ background:"var(--bg2)", border:"1px solid var(--border)", borderRadius:5, padding:"8px 12px", display:"flex", alignItems:"center", gap:12 }}>
+                <span style={{ flex:1, fontSize:13, fontFamily:"sans-serif", color:"var(--text3)", minWidth:0 }}>{item.name}</span>
+                {item.visual_description && (
+                  <span style={{ fontSize:11, color:"var(--text4)", fontFamily:"sans-serif", flex:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.visual_description}</span>
+                )}
+                <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                  <select
+                    value={claimSelections[item.id] || ""}
+                    onChange={e => setClaimSelections(p => ({ ...p, [item.id]: e.target.value }))}
+                    style={{ background:"var(--bg4)", border:"1px solid var(--border2)", borderRadius:4, color:"var(--text4)", fontSize:11, fontFamily:"sans-serif", padding:"3px 6px", cursor:"pointer", outline:"none" }}
+                  >
+                    <option value="">— container —</option>
+                    {containers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <button
+                    onClick={() => claimItem(item, claimSelections[item.id])}
+                    disabled={!claimSelections[item.id]}
+                    style={{ ...taBtn, fontSize:10, color:"var(--gold)", borderColor:"var(--gold2)" }}
+                  >Claim</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -431,6 +621,9 @@ function DetailPanel({ char, onCharUpdate }) {
                 setCombat(prev => ({ ...(prev||{}), [key]: val, character_id: char.id }));
               }} />
         )}
+
+        {/* items tab */}
+        {tab === "Items" && <ItemsTab char={char} />}
 
         {/* relationships tab */}
         {tab === "Relationships" && (

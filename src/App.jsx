@@ -50,8 +50,8 @@ function ProseViewer() {
   const [location,        setLocation]        = useState("Thorncliff Manor");
   const [locationId,      setLocationId]      = useState(null);
   const [timeOfDay,       setTimeOfDay]       = useState("Evening");
-  const [weather,         setWeather]         = useState("");
-  const [season,          setSeason]          = useState("");
+  const [weather,         setWeather]         = useState(() => localStorage.getItem("weather") || "");
+  const [season,          setSeason]          = useState(() => localStorage.getItem("season") || "");
   const [snapOutfitTags,  setSnapOutfitTags]  = useState({});
   const [wardrobeMap,     setWardrobeMap]     = useState({});
   const [mode,            setMode]            = useState("narrative");
@@ -533,6 +533,7 @@ function ProseViewer() {
           proseContext,
           characters:            sceneCharsWithData,
           location:              effectiveLoc,
+          locationId:            locationId || null,
           timeOfDay:             effectiveTime,
           sceneMode:             mode,
           chapterSummary:        chData?.context_summary || "",
@@ -640,6 +641,7 @@ function ProseViewer() {
 
   const handleWeatherChange = (v) => {
     setWeather(v);
+    localStorage.setItem("weather", v);
     if (activeBeatId) {
       supabase.from("beats").update({ snap_weather: v || null }).eq("id", activeBeatId);
       setScenesWithBeats(prev => prev.map(sw => ({
@@ -651,6 +653,7 @@ function ProseViewer() {
 
   const handleSeasonChange = (v) => {
     setSeason(v);
+    localStorage.setItem("season", v);
     if (activeBeatId) {
       supabase.from("beats").update({ snap_season: v || null }).eq("id", activeBeatId);
       setScenesWithBeats(prev => prev.map(sw => ({

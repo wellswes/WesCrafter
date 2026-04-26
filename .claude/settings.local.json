@@ -18,7 +18,8 @@
       "Read(//c/Users/wesnc/WesCrafter/WesCrafter/**)",
       "mcp__claude_ai_Supabase__get_edge_function",
       "mcp__claude_ai_Supabase__list_tables",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "Bash(xargs wc *)"
     ]
   }
 }
