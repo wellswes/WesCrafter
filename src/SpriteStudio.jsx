@@ -13,85 +13,49 @@ const QUALITY_TAGS  = "game cg, visual novel, highly detailed, soft lighting, wh
 
 const CLIP_TYPES = ["idle", "combat", "intimate", "background"];
 
-// Pose options — pipeline stages + body poses
-const POSE_OPTIONS = {
-  "— Pipeline —": null,
-  "Face Seed": {
-    tags: "face focus, close-up portrait",
-    model: "Curated 4.5",
-    canvas: "512×640",
-    method: "Text to Image · run multiple seeds · save best seed number",
-  },
-  "Body Seed": {
-    tags: "full body, standing, arms at sides, facing viewer",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from face master · Strength 1 · Fidelity 1",
-  },
-  "— Sprites —": null,
-  "Full Body": {
-    tags: "full body, standing, arms at sides, facing viewer",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Cowboy Shot": {
-    tags: "cowboy shot, standing",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Half Body": {
-    tags: "half body, standing",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Portrait": {
-    tags: "upper body, simple background",
-    model: "Curated 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "— Poses —": null,
-  "Seated": {
-    tags: "sitting, upper body",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Hand on Hip": {
-    tags: "hand on hip, standing",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Three Quarter": {
-    tags: "three quarter view, standing",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Arms Crossed": {
-    tags: "arms crossed, standing, looking at viewer",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "Kneeling": {
-    tags: "kneeling, submissive pose",
-    model: "Base 4.5",
-    canvas: "512×640",
-    method: "Precise Reference from body seed · Strength 1 · Fidelity 1",
-  },
-  "— Background —": null,
-  "Background": {
-    tags: "atmospheric background, no humans",
-    model: "Curated 4.5",
-    canvas: "1216×832",
-    method: "Text to Image",
-  },
+const FRAMING_OPTIONS = {
+  "— Pipeline —":  null,
+  "Face Seed":  { slug: "face-seed",  tags: "face focus, close-up portrait",           model: "Curated 4.5", canvas: "512×640",  method: "Text to Image · run multiple seeds · save best seed number" },
+  "Body Seed":  { slug: "body-seed",  tags: "full body, standing, arms at sides, facing viewer", model: "Base 4.5", canvas: "512×640", method: "Precise Reference from face master · Strength 1 · Fidelity 1" },
+  "— Framing —":   null,
+  "Portrait":   { slug: "portrait",   tags: "upper body, simple background",           model: "Curated 4.5", canvas: "512×640",  method: "Precise Reference from body seed · Strength 1 · Fidelity 1" },
+  "Cowboy Shot":{ slug: "cowboy",     tags: "cowboy shot",                             model: "Base 4.5",    canvas: "512×640",  method: "Precise Reference from body seed · Strength 1 · Fidelity 1" },
+  "Full Body":  { slug: "full-body",  tags: "full body",                               model: "Base 4.5",    canvas: "512×640",  method: "Precise Reference from body seed · Strength 1 · Fidelity 1" },
+  "— Background —":null,
+  "Background": { slug: "bg",         tags: "atmospheric background, no humans",       model: "Curated 4.5", canvas: "1216×832", method: "Text to Image" },
 };
+
+const BODY_POSE_OPTIONS = {
+  "":              { slug: "",                tags: "" },
+  "arms at sides": { slug: "arms-at-sides",  tags: "standing, arms at sides, facing viewer" },
+  "arms crossed":  { slug: "arms-crossed",   tags: "arms crossed, standing, looking at viewer" },
+  "arms raised":   { slug: "arms-raised",    tags: "arms raised, standing" },
+  "hands on hips": { slug: "hands-on-hips",  tags: "hand on hip, standing" },
+  "leaning":       { slug: "leaning",        tags: "leaning, standing" },
+  "kneeling":      { slug: "kneeling",       tags: "kneeling, submissive pose" },
+};
+
+const PRESET_GROUPS = ["Reference", "Portraits", "NSFW", "SFW"];
+const PRESETS = [
+  { group: "Reference", label: "Portrait / neutral",               framing: "Portrait",    pose: "",              expression: "neutral" },
+  { group: "Reference", label: "Cowboy / neutral",                 framing: "Cowboy Shot", pose: "",              expression: "neutral" },
+  { group: "Portraits", label: "Portrait / smile",                 framing: "Portrait",    pose: "",              expression: "smile" },
+  { group: "Portraits", label: "Portrait / smirk",                 framing: "Portrait",    pose: "",              expression: "smirk" },
+  { group: "Portraits", label: "Portrait / seductive",             framing: "Portrait",    pose: "",              expression: "seductive" },
+  { group: "NSFW",      label: "Full Body / kneeling / submissive",framing: "Full Body",   pose: "kneeling",      expression: "submissive" },
+  { group: "NSFW",      label: "Full Body / kneeling / blush",     framing: "Full Body",   pose: "kneeling",      expression: "blush" },
+  { group: "NSFW",      label: "Cowboy / arms crossed / smirk",    framing: "Cowboy Shot", pose: "arms crossed",  expression: "smirk" },
+  { group: "NSFW",      label: "Cowboy / arms at sides / neutral", framing: "Cowboy Shot", pose: "arms at sides", expression: "neutral" },
+  { group: "NSFW",      label: "Cowboy / hands on hips / seductive",framing: "Cowboy Shot",pose: "hands on hips", expression: "seductive" },
+  { group: "NSFW",      label: "Cowboy / arms raised / flustered", framing: "Cowboy Shot", pose: "arms raised",   expression: "flustered" },
+  { group: "NSFW",      label: "Cowboy / leaning / smile",         framing: "Cowboy Shot", pose: "leaning",       expression: "smile" },
+  { group: "SFW",       label: "Full Body / kneeling / neutral",   framing: "Full Body",   pose: "kneeling",      expression: "neutral" },
+  { group: "SFW",       label: "Cowboy / arms crossed / smirk",    framing: "Cowboy Shot", pose: "arms crossed",  expression: "smirk" },
+  { group: "SFW",       label: "Cowboy / arms at sides / neutral", framing: "Cowboy Shot", pose: "arms at sides", expression: "neutral" },
+  { group: "SFW",       label: "Cowboy / hands on hips / seductive",framing: "Cowboy Shot",pose: "hands on hips", expression: "seductive" },
+  { group: "SFW",       label: "Cowboy / arms raised / flustered", framing: "Cowboy Shot", pose: "arms raised",   expression: "flustered" },
+  { group: "SFW",       label: "Cowboy / leaning / smile",         framing: "Cowboy Shot", pose: "leaning",       expression: "smile" },
+];
 
 const CSS = `
   :root {
@@ -227,7 +191,9 @@ export default function SpriteStudio() {
   const [charLoading,  setCharLoading]  = useState(false);
 
   const [mode,         setMode]         = useState("SFW");
-  const [pose,         setPose]         = useState("Face Seed");
+  const [framing,      setFraming]      = useState("Face Seed");
+  const [bodyPose,     setBodyPose]     = useState("");
+  const [preset,       setPreset]       = useState("");
   const [bust,         setBust]         = useState("");
   const [expression,   setExpression]   = useState("");
 
@@ -328,6 +294,8 @@ export default function SpriteStudio() {
     setPositiveOverride(char.novelai_positive || "");
     setNegativeOverride(char.novelai_negative || "");
     setBust("");
+    setExpression("");
+    setPreset("");
     setSelectedOutfit(null);
     setSelectedAccessories(new Set());
     const [{ data: e }, { data: s }, { data: ls }, { data: ward }] = await Promise.all([
@@ -413,17 +381,14 @@ export default function SpriteStudio() {
 
     setUploading(true);
     try {
-      const filename = file.name;
-      const isExplicit = /_x_s-/i.test(filename) || /_(x|X)\.[a-zA-Z]+$/.test(filename);
+      const filename   = file.name;
+      const isExplicit = mode === "Explicit";
       const clipMatch  = CLIP_TYPES.find(ct => new RegExp(`_${ct}[_.]`, "i").test(filename));
       const parsedClip = clipMatch || "idle";
 
-      // Build clean path: [story_id]/[char_slug]/[prefix]_[seed].[ext]
-      const dotIdx   = filename.lastIndexOf(".");
-      const base     = dotIdx >= 0 ? filename.slice(0, dotIdx) : filename;
-      const prefix   = base.split(",")[0].trimEnd();
-      const charSlug = prefix.split("_")[0];
-      const seedMatch = base.match(/s-(\d+)\s*$/);
+      const dotIdx    = filename.lastIndexOf(".");
+      const base      = dotIdx >= 0 ? filename.slice(0, dotIdx) : filename;
+      const seedMatch = base.match(/s-(\d+)/i);
 
       // Background removal for images (skip WebM)
       const isWebM = /\.webm$/i.test(filename);
@@ -435,20 +400,21 @@ export default function SpriteStudio() {
         form.append("image_file", file);
         const bgRes = await fetch("/api/remove-bg", { method: "POST", body: form });
         if (!bgRes.ok) throw new Error(`Background removal failed (${bgRes.status})`);
-        uploadFile = new File([await bgRes.blob()], prefix + ".png", { type: "image/png" });
+        uploadFile = new File([await bgRes.blob()], base + ".png", { type: "image/png" });
         ext = ".png";
       }
       setUploadStatus("Uploading…");
 
-      // Insert expression slug before _x suffix (if any)
-      const expSlug = expression
-        ? expression.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "")
-        : "";
-      const taggedPrefix = expSlug
-        ? (/_x$/i.test(prefix) ? prefix.replace(/_x$/i, `_${expSlug}_x`) : `${prefix}_${expSlug}`)
-        : prefix;
-
-      const cleanFilename = seedMatch ? `${taggedPrefix}_s-${seedMatch[1]}${ext}` : `${taggedPrefix}${ext}`;
+      // Build filename from UI state: [char]_[framing]_[pose]_[expression]_[x]_s-[seed].ext
+      const toSlug      = s => s.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const charSlug    = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+      const framingSlug = FRAMING_OPTIONS[framing]?.slug || toSlug(framing);
+      const poseSlug    = BODY_POSE_OPTIONS[bodyPose]?.slug || "";
+      const expSlug     = expression ? toSlug(expression) : "";
+      const xSuffix     = isExplicit ? "_x" : "";
+      const seedPart    = seedMatch ? `_s-${seedMatch[1]}` : "";
+      const tokens      = [charSlug, framingSlug, poseSlug, expSlug].filter(Boolean);
+      const cleanFilename = `${tokens.join("_")}${xSuffix}${seedPart}${ext}`;
       const path          = `${STORY_ID}/${charSlug}/${cleanFilename}`;
 
       const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, uploadFile, { upsert: true });
@@ -511,9 +477,8 @@ export default function SpriteStudio() {
     let parsed = null;
     try { parsed = novelaiPrompt ? JSON.parse(novelaiPrompt) : null; } catch {}
 
-    const poseData   = POSE_OPTIONS[pose];
-    const isFaceSeed = pose === "Face Seed";
-    const isExplicit = mode === "Explicit";
+    const framingData = FRAMING_OPTIONS[framing];
+    const isExplicit  = mode === "Explicit";
 
     const parts = [];
 
@@ -574,11 +539,15 @@ export default function SpriteStudio() {
       parts.push(parsed.explicit);
     }
 
-    // 7. Pose / framing tags — deduplicate background tags
-    if (poseData?.tags) {
+    // 7. Framing + body pose tags
+    const allPoseTags = [
+      ...(framingData?.tags?.split(",").map(t => t.trim()) || []),
+      ...(BODY_POSE_OPTIONS[bodyPose]?.tags?.split(",").map(t => t.trim()) || []),
+    ].filter(Boolean);
+    if (allPoseTags.length) {
       const existingTags = new Set(parts.join(", ").toLowerCase().split(",").map(t => t.trim()));
-      const poseTags = poseData.tags.split(",").map(t => t.trim()).filter(t => !existingTags.has(t.toLowerCase()));
-      if (poseTags.length) parts.push(poseTags.join(", "));
+      const newTags = allPoseTags.filter(t => !existingTags.has(t.toLowerCase()));
+      if (newTags.length) parts.push(newTags.join(", "));
     }
 
     // 8. Vibe — excluded from prompt (codex field, not a prompt tag)
@@ -588,11 +557,12 @@ export default function SpriteStudio() {
 
     // 0. Prefix (unshifted to front)
     const slug           = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const poseSlug       = pose.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const framingPfx     = framing.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const posePfx        = bodyPose.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
     const outfitItem     = wardrobe.find(w => w.id === selectedOutfit);
     const outfitSlug     = outfitItem?.prompt_shortcode || "";
     const explicitSuffix = isExplicit ? "_x" : "";
-    const prefixParts    = [slug, poseSlug, outfitSlug].filter(Boolean).join("_");
+    const prefixParts    = [slug, framingPfx, posePfx, outfitSlug].filter(Boolean).join("_");
     const prefix         = `${prefixParts}${explicitSuffix}`;
     parts.unshift(prefix);
 
@@ -622,8 +592,8 @@ export default function SpriteStudio() {
     ? Object.keys(groupMap)
     : groupOrder.filter(g => groupMap[g]?.length);
 
-  const prompt    = buildPrompt();
-  const poseData  = POSE_OPTIONS[pose];
+  const prompt      = buildPrompt();
+  const framingData = FRAMING_OPTIONS[framing];
   const negPrompt  = selected?.novelai_negative
     ? `${NEGATIVE_PROMPT}, ${selected.novelai_negative}`
     : NEGATIVE_PROMPT;
@@ -783,32 +753,80 @@ export default function SpriteStudio() {
                     const outfitItems    = wardrobe.filter(w => !w.is_accessory && w.prompt_shortcode !== "nude");
                     const accessoryItems = wardrobe.filter(w => w.is_accessory === true);
                     const accCount       = selectedAccessories.size;
+                    const selStyle = (active) => ({ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: active ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" });
+                    const lbl = (text) => <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{text}</div>;
                     return (
-                      <div style={{ display: "flex", gap: 20, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+                      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+
+                        {/* Preset */}
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Mode</div>
+                          {lbl("Preset")}
+                          <select
+                            value={preset}
+                            onChange={e => {
+                              const p = PRESETS.find(p => p.label === e.target.value);
+                              if (!p) { setPreset(""); return; }
+                              setPreset(p.label);
+                              setFraming(p.framing);
+                              setBodyPose(p.pose);
+                              setExpression(p.expression);
+                            }}
+                            style={{ ...selStyle(!!preset), minWidth: 220 }}
+                          >
+                            <option value="">— pick preset —</option>
+                            {PRESET_GROUPS.map(grp => (
+                              <optgroup key={grp} label={grp}>
+                                {PRESETS.filter(p => p.group === grp).map(p => (
+                                  <option key={p.label} value={p.label}>{p.label}</option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Mode */}
+                        <div>
+                          {lbl("Mode")}
                           <ToggleGroup options={["SFW", "Explicit"]} value={mode} onChange={setMode} />
                         </div>
+
+                        {/* Framing */}
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Pose / Stage</div>
+                          {lbl("Framing")}
                           <select
-                            value={pose}
-                            onChange={e => setPose(e.target.value)}
-                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
+                            value={framing}
+                            onChange={e => { setFraming(e.target.value); setPreset(""); }}
+                            style={{ ...selStyle(true), minWidth: 140 }}
                           >
-                            {Object.entries(POSE_OPTIONS).map(([key, val]) =>
+                            {Object.entries(FRAMING_OPTIONS).map(([key, val]) =>
                               val === null
-                                ? <option key={key} disabled style={{ color: "var(--text4)" }}>{key}</option>
+                                ? <option key={key} disabled>{key}</option>
                                 : <option key={key} value={key}>{key}</option>
                             )}
                           </select>
                         </div>
+
+                        {/* Pose */}
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Bust</div>
+                          {lbl("Pose")}
+                          <select
+                            value={bodyPose}
+                            onChange={e => { setBodyPose(e.target.value); setPreset(""); }}
+                            style={selStyle(!!bodyPose)}
+                          >
+                            {Object.keys(BODY_POSE_OPTIONS).map(key => (
+                              <option key={key} value={key}>{key || "(none)"}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Bust */}
+                        <div>
+                          {lbl("Bust")}
                           <select
                             value={bust}
                             onChange={e => setBust(e.target.value)}
-                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: bust ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" }}
+                            style={selStyle(!!bust)}
                           >
                             <option value="">(omit)</option>
                             <option value="flat chest">flat chest</option>
@@ -817,12 +835,14 @@ export default function SpriteStudio() {
                             <option value="large breasts">large breasts</option>
                           </select>
                         </div>
+
+                        {/* Expression */}
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Expression</div>
+                          {lbl("Expression")}
                           <select
                             value={expression}
-                            onChange={e => setExpression(e.target.value)}
-                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: expression ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" }}
+                            onChange={e => { setExpression(e.target.value); setPreset(""); }}
+                            style={selStyle(!!expression)}
                           >
                             <option value="">(omit)</option>
                             <option value="neutral">neutral</option>
@@ -836,19 +856,22 @@ export default function SpriteStudio() {
                             <option value="angry">angry</option>
                             <option value="playful">playful</option>
                             <option value="seductive">seductive</option>
+                            <option value="submissive">submissive</option>
                             <option value="ahegao">ahegao</option>
                             <option value="open mouth">open mouth</option>
                             <option value="wink">wink</option>
                             <option value=":3">:3</option>
                           </select>
                         </div>
+
+                        {/* Outfit */}
                         {outfitItems.length > 0 && (
                           <div>
-                            <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Outfit</div>
+                            {lbl("Outfit")}
                             <select
                               value={selectedOutfit || ""}
                               onChange={e => setSelectedOutfit(e.target.value || null)}
-                              style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: selectedOutfit ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
+                              style={{ ...selStyle(!!selectedOutfit), minWidth: 160 }}
                             >
                               <option value="">— No outfit —</option>
                               {outfitItems.map(item => (
@@ -857,11 +880,11 @@ export default function SpriteStudio() {
                             </select>
                           </div>
                         )}
+
+                        {/* Accessories */}
                         {accessoryItems.length > 0 && (
                           <div>
-                            <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
-                              Accessories {accCount > 0 && <span style={{ color: "var(--gold2)" }}>({accCount})</span>}
-                            </div>
+                            {lbl(<>Accessories {accCount > 0 && <span style={{ color: "var(--gold2)" }}>({accCount})</span>}</>)}
                             <details style={{ position: "relative" }}>
                               <summary style={{ ...taBtn, display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", listStyle: "none", cursor: "pointer", userSelect: "none" }}>
                                 {accCount === 0 ? "None selected" : `${accCount} selected`} <span style={{ fontSize: 9 }}>▾</span>
@@ -882,6 +905,7 @@ export default function SpriteStudio() {
                             </details>
                           </div>
                         )}
+
                       </div>
                     );
                   })()}
@@ -918,16 +942,16 @@ export default function SpriteStudio() {
                   </div>
 
                   {/* Generation notes */}
-                  {poseData && (
+                  {framingData && (
                     <div style={{ marginBottom: 14, padding: "8px 12px", background: "var(--bg3)", border: "1px solid var(--border)", borderRadius: 4, fontSize: 11, color: "var(--text4)", fontFamily: "sans-serif", lineHeight: 1.8 }}>
                       <span style={{ color: "var(--gold2)" }}>⚙</span>
-                      {" "}Model: <span style={{ color: "var(--text3)" }}>{poseData.model}</span>
-                      {" · "}Canvas: <span style={{ color: "var(--text3)" }}>{poseData.canvas}</span>
-                      {" · "}<span style={{ color: "var(--text3)" }}>{poseData.method}</span>
-                      {pose === "Face Seed" && faceSeed && (
+                      {" "}Model: <span style={{ color: "var(--text3)" }}>{framingData.model}</span>
+                      {" · "}Canvas: <span style={{ color: "var(--text3)" }}>{framingData.canvas}</span>
+                      {" · "}<span style={{ color: "var(--text3)" }}>{framingData.method}</span>
+                      {framing === "Face Seed" && faceSeed && (
                         <span> · Face seed: <span style={{ color: "var(--gold)", fontFamily: "monospace" }}>{faceSeed}</span></span>
                       )}
-                      {pose !== "Face Seed" && pose !== "Body Seed" && bodySeed && (
+                      {framing !== "Face Seed" && framing !== "Body Seed" && bodySeed && (
                         <span> · Body seed: <span style={{ color: "var(--gold)", fontFamily: "monospace" }}>{bodySeed}</span></span>
                       )}
                     </div>
