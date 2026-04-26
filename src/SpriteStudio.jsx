@@ -37,8 +37,8 @@ const BODY_POSE_OPTIONS = {
 
 const PRESET_GROUPS = ["Reference", "Portraits", "NSFW", "SFW"];
 const PRESETS = [
-  { group: "Reference", label: "Portrait / neutral",               framing: "Portrait",    pose: "",              expression: "neutral" },
-  { group: "Reference", label: "Cowboy / neutral",                 framing: "Cowboy Shot", pose: "",              expression: "neutral" },
+  { group: "Reference", label: "portrait_reference",               framing: "Portrait",    pose: "",              expression: "neutral" },
+  { group: "Reference", label: "body_reference",                   framing: "Cowboy Shot", pose: "",              expression: "neutral" },
   { group: "Portraits", label: "Portrait / smile",                 framing: "Portrait",    pose: "",              expression: "smile" },
   { group: "Portraits", label: "Portrait / smirk",                 framing: "Portrait",    pose: "",              expression: "smirk" },
   { group: "Portraits", label: "Portrait / seductive",             framing: "Portrait",    pose: "",              expression: "seductive" },
