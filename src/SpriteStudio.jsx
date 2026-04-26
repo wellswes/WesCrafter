@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { Link, useSearchParams } from "react-router-dom";
-import { supabase } from "./supabase.js";
+import { supabase, STORY_ID } from "./constants.js";
 
 const WORLD_ID       = "96f993ca-19eb-4698-b0f7-e8ee94d7e8fc";
 const STORAGE_BUCKET = "Wescrafter Images";
@@ -222,6 +222,7 @@ export default function SpriteStudio() {
 
   const [mode,         setMode]         = useState("SFW");
   const [pose,         setPose]         = useState("Face Seed");
+  const [bust,         setBust]         = useState("");
   const [clipType,     setClipType]     = useState("idle");
 
   // wardrobe
@@ -230,9 +231,14 @@ export default function SpriteStudio() {
   const [selectedAccessories, setSelectedAccessories] = useState(new Set());
 
   // seed fields
-  const [faceSeed,     setFaceSeed]     = useState("");
-  const [bodySeed,     setBodySeed]     = useState("");
-  const [seedSaving,   setSeedSaving]   = useState(false);
+  const [faceSeed,          setFaceSeed]          = useState("");
+  const [bodySeed,          setBodySeed]           = useState("");
+  const [seedSaving,        setSeedSaving]         = useState(false);
+
+  // prompt overrides
+  const [positiveOverride,  setPositiveOverride]   = useState("");
+  const [negativeOverride,  setNegativeOverride]   = useState("");
+  const [overrideSaving,    setOverrideSaving]     = useState(false);
 
   // prompt generation
   const [novelaiPrompt,    setNovElaiPrompt]    = useState("");
@@ -243,9 +249,10 @@ export default function SpriteStudio() {
   const [charLinkedStories, setCharLinkedStories] = useState([]);
   const [linkingStory,      setLinkingStory]      = useState(false);
 
-  const [dragOver,    setDragOver]    = useState(false);
-  const [uploading,   setUploading]   = useState(false);
-  const [toast,       setToast]       = useState("");
+  const [dragOver,      setDragOver]      = useState(false);
+  const [uploading,     setUploading]     = useState(false);
+  const [uploadStatus,  setUploadStatus]  = useState("Uploading…");
+  const [toast,         setToast]         = useState("");
   const [lightbox,    setLightbox]    = useState(null);
   const [showNewChar, setShowNewChar] = useState(false);
 
@@ -271,7 +278,7 @@ export default function SpriteStudio() {
       if (charId) {
         const { data: chars } = await supabase
           .from("characters")
-          .select("id, name, portrait_url, character_group, species, height_feet, height_inches, height_cm, physical_appearance, novelai_prompt, novelai_face_seed, novelai_body_seed")
+          .select("id, name, portrait_url, character_group, species, height_feet, height_inches, height_cm, physical_appearance, novelai_prompt, novelai_face_seed, novelai_body_seed, novelai_positive, novelai_negative")
           .eq("id", charId)
           .single();
         if (chars) await doSelectChar(chars);
@@ -283,7 +290,7 @@ export default function SpriteStudio() {
   }, []);
 
   const loadCharacters = useCallback(async (storyId) => {
-    const SELECT = "id, name, portrait_url, character_group, species, height_feet, height_inches, height_cm, physical_appearance, novelai_prompt, novelai_face_seed, novelai_body_seed";
+    const SELECT = "id, name, portrait_url, character_group, species, height_feet, height_inches, height_cm, physical_appearance, novelai_prompt, novelai_face_seed, novelai_body_seed, novelai_positive, novelai_negative";
     let query = supabase.from("characters").select(SELECT);
 
     if (storyId !== "all") {
@@ -312,13 +319,16 @@ export default function SpriteStudio() {
     setNovElaiPrompt(char.novelai_prompt || "");
     setFaceSeed(char.novelai_face_seed ? String(char.novelai_face_seed) : "");
     setBodySeed(char.novelai_body_seed ? String(char.novelai_body_seed) : "");
+    setPositiveOverride(char.novelai_positive || "");
+    setNegativeOverride(char.novelai_negative || "");
+    setBust("");
     setSelectedOutfit(null);
     setSelectedAccessories(new Set());
     const [{ data: e }, { data: s }, { data: ls }, { data: ward }] = await Promise.all([
       supabase.from("character_erotic").select("appearance_detail, body_attributes").eq("character_id", char.id).single(),
       supabase.from("character_sprites").select("*").eq("character_id", char.id).order("is_default", { ascending: false }),
       supabase.from("story_characters").select("story_id, stories(title)").eq("character_id", char.id),
-      supabase.from("items").select("id, name, prompt_shortcode, visual_description, containers!inner(character_id)").eq("containers.character_id", char.id).not("prompt_shortcode", "is", null),
+      supabase.from("items").select("id, name, prompt_shortcode, visual_description, novelai_description, is_accessory, containers!inner(character_id)").eq("containers.character_id", char.id).not("prompt_shortcode", "is", null),
     ]);
     setErotic(e || null);
     setSprites(s || []);
@@ -347,6 +357,19 @@ export default function SpriteStudio() {
     }).eq("id", selected.id);
     setSeedSaving(false);
     showToast("Seeds saved");
+  };
+
+  // ── Save overrides ──────────────────────────────────────────────────────────
+  const saveOverrides = async () => {
+    if (!selected) return;
+    setOverrideSaving(true);
+    await supabase.from("characters").update({
+      novelai_positive: positiveOverride || null,
+      novelai_negative: negativeOverride || null,
+    }).eq("id", selected.id);
+    setSelected(prev => ({ ...prev, novelai_positive: positiveOverride || null, novelai_negative: negativeOverride || null }));
+    setOverrideSaving(false);
+    showToast("Overrides saved");
   };
 
   // ── Generate base prompt via AI ─────────────────────────────────────────────
@@ -385,13 +408,40 @@ export default function SpriteStudio() {
     setUploading(true);
     try {
       const filename = file.name;
-      const isExplicit = /_(x|X)\.[a-zA-Z]+$/.test(filename);
+      const isExplicit = /_x_s-/i.test(filename) || /_(x|X)\.[a-zA-Z]+$/.test(filename);
       const clipMatch  = CLIP_TYPES.find(ct => new RegExp(`_${ct}[_.]`, "i").test(filename));
       const parsedClip = clipMatch || "idle";
 
-      const path = `sprites/${selected.id}/${filename}`;
-      const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file, { upsert: true });
-      if (upErr) throw upErr;
+      // Build clean path: [story_id]/[char_slug]/[prefix]_[seed].[ext]
+      const dotIdx   = filename.lastIndexOf(".");
+      const base     = dotIdx >= 0 ? filename.slice(0, dotIdx) : filename;
+      const prefix   = base.split(",")[0].trimEnd();
+      const charSlug = prefix.split("_")[0];
+      const seedMatch = base.match(/s-(\d+)\s*$/);
+
+      // Background removal for images (skip WebM)
+      const isWebM = /\.webm$/i.test(filename);
+      let uploadFile = file;
+      let ext = dotIdx >= 0 ? filename.slice(dotIdx) : ".png";
+      if (!isWebM) {
+        setUploadStatus("Removing background…");
+        const form = new FormData();
+        form.append("image_file", file);
+        const bgRes = await fetch("/api/remove-bg", { method: "POST", body: form });
+        if (!bgRes.ok) throw new Error(`Background removal failed (${bgRes.status})`);
+        uploadFile = new File([await bgRes.blob()], prefix + ".png", { type: "image/png" });
+        ext = ".png";
+      }
+      setUploadStatus("Uploading…");
+
+      const cleanFilename = seedMatch ? `${prefix}_s-${seedMatch[1]}${ext}` : `${prefix}${ext}`;
+      const path          = `${STORY_ID}/${charSlug}/${cleanFilename}`;
+
+      const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET).upload(path, uploadFile, { upsert: true });
+      if (upErr) {
+        console.error("Storage upload error", { message: upErr.message, statusCode: upErr.statusCode, error: upErr });
+        throw upErr;
+      }
 
       const { data: { publicUrl } } = supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path);
 
@@ -460,19 +510,46 @@ export default function SpriteStudio() {
     if (parsed?.identity) parts.push(parsed.identity);
     else parts.push("1girl, solo");
 
-    // 3. Physical DNA
-    if (parsed?.physical) parts.push(parsed.physical);
+    // 3. Physical DNA — strip breast size (controlled by bust dropdown), occupation tags, and deduplicate
+    if (parsed?.physical) {
+      const stripped = parsed.physical
+        // weighted variants: (word breasts:1.2) or (word chest:1.3)
+        .replace(/\(\s*(flat|soft|full|small|medium|large|huge|gigantic|massive|enormous)\s+(chest|breasts?|boobs?|tits?|bust)\s*:[0-9.]+\s*\)/gi, "")
+        // plain variants: word breasts / word chest
+        .replace(/\b(flat|soft|full|small|medium|large|huge|gigantic|massive|enormous)\s+(chest|breasts?|boobs?|tits?|bust)\b/gi, "")
+        // cup sizes: A-cup, b cup, Dcup etc.
+        .replace(/\(\s*[a-fA-F][-\s]?cup\s*:[0-9.]+\s*\)/gi, "")
+        .replace(/\b[a-fA-F][-\s]?cup\b/gi, "")
+        // occupation/role tags
+        .replace(/\b(chef|cook|baker|scholar|researcher|scientist|doctor|nurse|teacher|professor|librarian|maid|butler|soldier|knight|guard|merchant|farmer|hunter|warrior|wizard|mage|witch|priestess?|nun|detective|officer|pilot|engineer|mechanic)\b/gi, "")
+        // normalise commas
+        .replace(/,\s*,+/g, ",").replace(/(^[\s,]+|[\s,]+$)/g, "").trim();
+      // deduplicate comma-separated tokens
+      const tokens = stripped.split(",").map(t => t.trim()).filter(Boolean);
+      const seen = new Set();
+      const deduped = tokens.filter(t => { const k = t.toLowerCase(); return seen.has(k) ? false : seen.add(k); });
+      if (deduped.length) parts.push(deduped.join(", "));
+    }
 
-    // 4. Outfit visual description (skip if nude or nothing selected)
-    if (selectedOutfit && selectedOutfit !== "nude") {
+    // 3b. Bust size — deduplicate if tag already appeared in physical
+    if (bust) {
+      const allSoFar = parts.join(", ").toLowerCase();
+      if (!allSoFar.includes(bust.toLowerCase())) parts.push(bust);
+    }
+
+    // 3c. Positive override
+    if (selected.novelai_positive) parts.push(selected.novelai_positive);
+
+    // 4. Outfit prompt
+    if (selectedOutfit) {
       const item = wardrobe.find(w => w.id === selectedOutfit);
-      if (item?.visual_description) parts.push(item.visual_description);
+      if (item) parts.push(item.novelai_description || item.name);
     }
 
     // 5. Accessories
     for (const id of selectedAccessories) {
       const item = wardrobe.find(w => w.id === id);
-      if (item?.visual_description) parts.push(item.visual_description);
+      if (item) parts.push(item.novelai_description || item.name);
     }
 
     // 6. Explicit body tags
@@ -480,24 +557,41 @@ export default function SpriteStudio() {
       parts.push(parsed.explicit);
     }
 
-    // 7. Pose / framing tags
-    if (poseData?.tags) parts.push(poseData.tags);
+    // 7. Pose / framing tags — deduplicate background tags
+    if (poseData?.tags) {
+      const existingTags = new Set(parts.join(", ").toLowerCase().split(",").map(t => t.trim()));
+      const poseTags = poseData.tags.split(",").map(t => t.trim()).filter(t => !existingTags.has(t.toLowerCase()));
+      if (poseTags.length) parts.push(poseTags.join(", "));
+    }
 
-    // 8. Vibe sentence (skip for face seed passes)
-    if (!isFaceSeed && parsed?.vibe) parts.push(parsed.vibe);
+    // 8. Vibe — excluded from prompt (codex field, not a prompt tag)
 
     // 9. Quality postamble
     parts.push(QUALITY_TAGS);
+
+    // 0. Prefix (unshifted to front)
+    const slug           = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const poseSlug       = pose.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const outfitItem     = wardrobe.find(w => w.id === selectedOutfit);
+    const outfitSlug     = outfitItem?.prompt_shortcode || "";
+    const explicitSuffix = isExplicit ? "_x" : "";
+    const prefixParts    = [slug, poseSlug, outfitSlug].filter(Boolean).join("_");
+    const prefix         = `${prefixParts}${explicitSuffix}`;
+    parts.unshift(prefix);
 
     return parts.filter(Boolean).join(", ");
   };
 
   const buildFilename = () => {
     if (!selected) return "";
-    const slug     = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-    const poseSlug = pose.toLowerCase().replace(/\s+/g, "_");
-    const base     = `safeharbor_${slug}_${clipType}_${poseSlug}_01`;
-    return mode === "Explicit" ? `${base}_x.png` : `${base}.png`;
+    const slug          = selected.name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const poseSlug      = pose.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    const outfitItem    = wardrobe.find(w => w.id === selectedOutfit);
+    const outfitSlug    = outfitItem?.prompt_shortcode || "";
+    const explicitSuffix = mode === "Explicit" ? "_x" : "";
+    const parts         = [slug, poseSlug, outfitSlug].filter(Boolean).join("_");
+    const prefix        = `${parts}${explicitSuffix}`;
+    return `${prefix}_01.png`;
   };
 
   const toggleCollapse = (grpName) => {
@@ -523,9 +617,12 @@ export default function SpriteStudio() {
     ? Object.keys(groupMap)
     : groupOrder.filter(g => groupMap[g]?.length);
 
-  const prompt   = buildPrompt();
-  const filename = buildFilename();
-  const poseData = POSE_OPTIONS[pose];
+  const prompt     = buildPrompt();
+  const filename   = buildFilename();
+  const poseData   = POSE_OPTIONS[pose];
+  const negPrompt  = selected?.novelai_negative
+    ? `${NEGATIVE_PROMPT}, ${selected.novelai_negative}`
+    : NEGATIVE_PROMPT;
 
   return (
     <>
@@ -626,49 +723,8 @@ export default function SpriteStudio() {
             ) : (
               <>
                 {/* character header */}
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 28, paddingBottom: 20, borderBottom: "1px solid var(--border)" }}>
-                  {selected.portrait_url
-                    ? <img src={selected.portrait_url} alt={selected.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6, border: "2px solid var(--border2)", flexShrink: 0 }} />
-                    : <div style={{ width: 72, height: 72, borderRadius: 6, background: "var(--bg4)", border: "2px solid var(--border2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, color: "var(--text4)", flexShrink: 0 }}>{selected.name[0]}</div>
-                  }
-                  <div>
-                    <div style={{ fontSize: 24, color: "var(--gold)", fontFamily: "Georgia, serif", marginBottom: 4 }}>{selected.name}</div>
-                    <div style={{ fontSize: 12, color: "var(--text4)", fontFamily: "sans-serif", lineHeight: 1.8 }}>
-                      {[
-                        selected.species,
-                        selected.height_feet != null ? `${selected.height_feet}'${selected.height_inches ?? 0}"` : null,
-                        selected.height_cm ? `${selected.height_cm} cm` : null,
-                      ].filter(Boolean).join(" · ")}
-                    </div>
-                    <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      {charLinkedStories.map(ls => (
-                        <span key={ls.story_id} style={{ fontSize: 10, fontFamily: "sans-serif", padding: "2px 8px", borderRadius: 10, background: "var(--bg4)", border: "1px solid var(--border2)", color: "var(--text3)", letterSpacing: "0.04em" }}>
-                          {ls.stories?.title || ls.story_id.slice(0, 8)}
-                        </span>
-                      ))}
-                      <select
-                        value=""
-                        disabled={linkingStory}
-                        onChange={async e => {
-                          if (!e.target.value) return;
-                          setLinkingStory(true);
-                          await supabase.from("story_characters").upsert({ character_id: selected.id, story_id: e.target.value }, { onConflict: "character_id,story_id" });
-                          const { data: ls } = await supabase.from("story_characters").select("story_id, stories(title)").eq("character_id", selected.id);
-                          setCharLinkedStories(ls || []);
-                          setLinkingStory(false);
-                          showToast("Character linked to story");
-                          e.target.value = "";
-                        }}
-                        style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text4)", fontSize: 11, fontFamily: "sans-serif", padding: "3px 8px", cursor: "pointer", outline: "none" }}
-                      >
-                        <option value="">+ Link to story…</option>
-                        {stories
-                          .filter(s => !charLinkedStories.some(ls => ls.story_id === s.id))
-                          .map(s => <option key={s.id} value={s.id}>{s.title}</option>)
-                        }
-                      </select>
-                    </div>
-                  </div>
+                <div style={{ marginBottom: 28, paddingBottom: 20, borderBottom: "1px solid var(--border)" }}>
+                  <div style={{ fontSize: 24, color: "var(--gold)", fontFamily: "Georgia, serif" }}>{selected.name}</div>
                 </div>
 
                 {/* ── Seeds ── */}
@@ -719,72 +775,118 @@ export default function SpriteStudio() {
                   </div>
 
                   {/* Controls row */}
-                  <div style={{ display: "flex", gap: 20, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
-                    <div>
-                      <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Mode</div>
-                      <ToggleGroup options={["SFW", "Explicit"]} value={mode} onChange={setMode} />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Pose / Stage</div>
-                      <select
-                        value={pose}
-                        onChange={e => setPose(e.target.value)}
-                        style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
-                      >
-                        {Object.entries(POSE_OPTIONS).map(([key, val]) =>
-                          val === null
-                            ? <option key={key} disabled style={{ color: "var(--text4)" }}>{key}</option>
-                            : <option key={key} value={key}>{key}</option>
-                        )}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Outfit + Accessories */}
-                  {wardrobe.filter(w => w.prompt_shortcode !== "nude").length > 0 && (() => {
-                    const outfitItems = wardrobe.filter(w => w.prompt_shortcode !== "nude");
-                    const accCount    = selectedAccessories.size;
+                  {(() => {
+                    const outfitItems    = wardrobe.filter(w => !w.is_accessory && w.prompt_shortcode !== "nude");
+                    const accessoryItems = wardrobe.filter(w => w.is_accessory === true);
+                    const accCount       = selectedAccessories.size;
                     return (
-                      <div style={{ marginBottom: 16, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
+                      <div style={{ display: "flex", gap: 20, marginBottom: 16, flexWrap: "wrap", alignItems: "flex-end" }}>
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Outfit</div>
+                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Mode</div>
+                          <ToggleGroup options={["SFW", "Explicit"]} value={mode} onChange={setMode} />
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Pose / Stage</div>
                           <select
-                            value={selectedOutfit || ""}
-                            onChange={e => setSelectedOutfit(e.target.value || null)}
-                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: selectedOutfit ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
+                            value={pose}
+                            onChange={e => setPose(e.target.value)}
+                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
                           >
-                            <option value="">— No outfit —</option>
-                            {outfitItems.map(item => (
-                              <option key={item.id} value={item.id}>{item.name}</option>
-                            ))}
+                            {Object.entries(POSE_OPTIONS).map(([key, val]) =>
+                              val === null
+                                ? <option key={key} disabled style={{ color: "var(--text4)" }}>{key}</option>
+                                : <option key={key} value={key}>{key}</option>
+                            )}
                           </select>
                         </div>
                         <div>
-                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
-                            Accessories {accCount > 0 && <span style={{ color: "var(--gold2)" }}>({accCount})</span>}
-                          </div>
-                          <details style={{ position: "relative" }}>
-                            <summary style={{ ...taBtn, display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", listStyle: "none", cursor: "pointer", userSelect: "none" }}>
-                              {accCount === 0 ? "None selected" : `${accCount} selected`} <span style={{ fontSize: 9 }}>▾</span>
-                            </summary>
-                            <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 6, padding: "8px 0", minWidth: 200, marginTop: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)" }}>
-                              {outfitItems.map(item => (
-                                <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 14px", cursor: "pointer", fontSize: 12, fontFamily: "sans-serif", color: selectedAccessories.has(item.id) ? "var(--text)" : "var(--text3)" }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={selectedAccessories.has(item.id)}
-                                    onChange={() => setSelectedAccessories(prev => { const n = new Set(prev); n.has(item.id) ? n.delete(item.id) : n.add(item.id); return n; })}
-                                    style={{ accentColor: "var(--gold)", flexShrink: 0 }}
-                                  />
-                                  {item.name}
-                                </label>
-                              ))}
-                            </div>
-                          </details>
+                          <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Bust</div>
+                          <select
+                            value={bust}
+                            onChange={e => setBust(e.target.value)}
+                            style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: bust ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none" }}
+                          >
+                            <option value="">(omit)</option>
+                            <option value="flat chest">flat chest</option>
+                            <option value="small breasts">small breasts</option>
+                            <option value="medium breasts">medium breasts</option>
+                            <option value="large breasts">large breasts</option>
+                          </select>
                         </div>
+                        {outfitItems.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Outfit</div>
+                            <select
+                              value={selectedOutfit || ""}
+                              onChange={e => setSelectedOutfit(e.target.value || null)}
+                              style={{ background: "var(--bg4)", border: "1px solid var(--border2)", borderRadius: 4, color: selectedOutfit ? "var(--text3)" : "var(--text4)", fontSize: 12, fontFamily: "sans-serif", padding: "6px 10px", cursor: "pointer", outline: "none", minWidth: 160 }}
+                            >
+                              <option value="">— No outfit —</option>
+                              {outfitItems.map(item => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {accessoryItems.length > 0 && (
+                          <div>
+                            <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>
+                              Accessories {accCount > 0 && <span style={{ color: "var(--gold2)" }}>({accCount})</span>}
+                            </div>
+                            <details style={{ position: "relative" }}>
+                              <summary style={{ ...taBtn, display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", listStyle: "none", cursor: "pointer", userSelect: "none" }}>
+                                {accCount === 0 ? "None selected" : `${accCount} selected`} <span style={{ fontSize: 9 }}>▾</span>
+                              </summary>
+                              <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 50, background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 6, padding: "8px 0", minWidth: 200, marginTop: 4, boxShadow: "0 4px 16px rgba(0,0,0,0.4)" }}>
+                                {accessoryItems.map(item => (
+                                  <label key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 14px", cursor: "pointer", fontSize: 12, fontFamily: "sans-serif", color: selectedAccessories.has(item.id) ? "var(--text)" : "var(--text3)" }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedAccessories.has(item.id)}
+                                      onChange={() => setSelectedAccessories(prev => { const n = new Set(prev); n.has(item.id) ? n.delete(item.id) : n.add(item.id); return n; })}
+                                      style={{ accentColor: "var(--gold)", flexShrink: 0 }}
+                                    />
+                                    {item.name}
+                                  </label>
+                                ))}
+                              </div>
+                            </details>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
+
+                  {/* Positive / Negative overrides */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>Positive Override</div>
+                        <textarea
+                          value={positiveOverride}
+                          onChange={e => setPositiveOverride(e.target.value)}
+                          rows={2}
+                          style={{ ...inpStyle, resize: "vertical", lineHeight: 1.6, fontFamily: "sans-serif" }}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>Negative Override</div>
+                        <textarea
+                          value={negativeOverride}
+                          onChange={e => setNegativeOverride(e.target.value)}
+                          rows={2}
+                          style={{ ...inpStyle, resize: "vertical", lineHeight: 1.6, fontFamily: "sans-serif" }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button
+                        onClick={saveOverrides}
+                        disabled={overrideSaving}
+                        style={{ ...taBtn, color: "var(--gold)", borderColor: "var(--gold2)", padding: "7px 16px" }}
+                      >{overrideSaving ? "Saving…" : "Save Overrides"}</button>
+                    </div>
+                  </div>
 
                   {/* Generation notes */}
                   {poseData && (
@@ -815,9 +917,9 @@ export default function SpriteStudio() {
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
                       <div style={{ fontSize: 10, color: "var(--text4)", fontFamily: "sans-serif", letterSpacing: "0.08em", textTransform: "uppercase" }}>Negative Prompt</div>
-                      <CopyButton text={NEGATIVE_PROMPT} />
+                      <CopyButton text={negPrompt} />
                     </div>
-                    <textarea readOnly value={NEGATIVE_PROMPT} rows={2} style={{ width: "100%", background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", lineHeight: 1.6, padding: "8px 10px", resize: "vertical", outline: "none" }} />
+                    <textarea readOnly value={negPrompt} rows={2} style={{ width: "100%", background: "var(--bg3)", border: "1px solid var(--border2)", borderRadius: 4, color: "var(--text3)", fontSize: 12, fontFamily: "sans-serif", lineHeight: 1.6, padding: "8px 10px", resize: "vertical", outline: "none" }} />
                   </div>
 
                   {/* Filename */}
@@ -893,7 +995,7 @@ export default function SpriteStudio() {
                     }}
                   >
                     <div style={{ fontSize: 13, color: "var(--text4)", fontFamily: "sans-serif", marginBottom: 6 }}>
-                      {uploading ? "Uploading…" : "Drop PNG, WebM, or APNG here"}
+                      {uploading ? uploadStatus : "Drop PNG, WebM, or APNG here"}
                     </div>
                     <div style={{ fontSize: 11, color: "var(--text4)", fontFamily: "sans-serif" }}>or click to browse · max 10MB</div>
                     <input
