@@ -86,6 +86,7 @@ function ProseViewer() {
   const directiveRef  = useRef(null);
   const proseRef      = useRef(null);
   const beatClickRef      = useRef(null);
+  const editTextareaRef   = useRef(null);
   const beatRefs          = useRef({});
   const candidateBeatRef  = useRef(null);
   const snapDebounceRef   = useRef(null);
@@ -590,6 +591,14 @@ function ProseViewer() {
     }, 120);
   };
 
+  useEffect(() => {
+    if (editingBeatId && editTextareaRef.current) {
+      const el = editTextareaRef.current;
+      el.style.height = "auto";
+      el.style.height = el.scrollHeight + "px";
+    }
+  }, [editingBeatId]);
+
   const saveBeatProse = async (beatId, text) => {
     setEditingBeatId(null);
     const proseChars = allChars.filter(c => charMatchesInProse(c, text));
@@ -885,7 +894,7 @@ function ProseViewer() {
                             )}
                             {editingBeatId === b.id
                               ? <textarea
-                                  ref={el => { if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }}
+                                  ref={editTextareaRef}
                                   value={editingText}
                                   autoFocus
                                   onChange={e => {
