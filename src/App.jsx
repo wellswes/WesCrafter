@@ -456,22 +456,27 @@ function ProseViewer() {
       const prevChapter    = chapters.find(c => c.sequence_number === currentSeq - 1);
       const olderChapters  = chapters.filter(c => c.sequence_number === currentSeq - 2 || c.sequence_number === currentSeq - 3);
 
-      // Previous chapter prose — fetch scenes then beats sequentially
+      // Previous chapter prose — last 2 scenes only, for voice calibration at chapter start
       const fetchPrevChapterProse = async () => {
         if (!prevChapter) return "";
         const { data: prevScenes } = await supabase
           .from("scenes").select("id, sequence_number")
           .eq("chapter_id", prevChapter.id).order("sequence_number");
         if (!prevScenes?.length) return "";
+        const lastTwoScenes = prevScenes.slice(-2);
         const { data: prevBeats } = await supabase
           .from("beats").select("prose_text, sequence_number, scene_id")
-          .in("scene_id", prevScenes.map(s => s.id)).order("sequence_number");
+          .in("scene_id", lastTwoScenes.map(s => s.id)).order("sequence_number");
         if (!prevBeats?.length) return "";
-        const sceneSeq = Object.fromEntries(prevScenes.map(s => [s.id, s.sequence_number]));
+        const sceneSeq = Object.fromEntries(lastTwoScenes.map(s => [s.id, s.sequence_number]));
         return prevBeats
           .sort((a, b) => sceneSeq[a.scene_id] - sceneSeq[b.scene_id] || a.sequence_number - b.sequence_number)
           .map(b => b.prose_text || "").filter(Boolean).join("\n\n");
       };
+
+      // Current chapter word count — determines whether previous chapter context is needed
+      const currentWordCount = scenesWithBeats.flatMap(({ beats }) => beats)
+        .reduce((n, b) => n + (b.prose_text?.trim() ? b.prose_text.trim().split(/\s+/).length : 0), 0);
 
       // All parallel fetches
       const charIds = effectiveChars.map(c => c.id);
@@ -486,6 +491,7 @@ function ProseViewer() {
         { data: olderChData },
         { data: relsData },
         prevChapterProse,
+        { data: eventsData },
       ] = await Promise.all([
         supabase.from("chapters").select("context_summary").eq("id", selCh).single(),
         supabase.from("app_settings").select("value").eq("key", `prompt_modifier_${mode}`).single(),
@@ -500,7 +506,13 @@ function ProseViewer() {
               .select("character_a_id, character_b_id, status, intimacy_level, tension_level, trust_level, dynamic_notes")
               .or(`character_a_id.in.(${charIds.join(",")}),character_b_id.in.(${charIds.join(",")})`)
           : Promise.resolve({ data: [] }),
-        fetchPrevChapterProse(),
+        currentWordCount < 1000 ? fetchPrevChapterProse() : Promise.resolve(""),
+        charIds.length
+          ? supabase.from("story_events")
+              .select("title, impact_level, summary")
+              .eq("story_id", STORY_ID)
+              .overlaps("character_ids", charIds)
+          : Promise.resolve({ data: [] }),
       ]);
 
       const sceneCharsWithData = (charData || effectiveChars).map(c => {
@@ -540,6 +552,7 @@ function ProseViewer() {
           chapterSummary:        chData?.context_summary || "",
           chapterSummaries,
           previousChapterProse:  prevChapterProse,
+          storyEvents:           eventsData || [],
           relationships:         enrichedRelationships,
           promptModifier:        pmData?.value || "",
           povCharacterName:      allChars.find(c => c.id === povCharacterId)?.name || "Zep",

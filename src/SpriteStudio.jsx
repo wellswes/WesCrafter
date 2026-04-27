@@ -539,15 +539,19 @@ export default function SpriteStudio() {
       parts.push(parsed.explicit);
     }
 
-    // 7. Framing + body pose tags
+    // 7. Framing + body pose tags — always inject; only skip tags already in QUALITY_TAGS
     const allPoseTags = [
       ...(framingData?.tags?.split(",").map(t => t.trim()) || []),
       ...(BODY_POSE_OPTIONS[bodyPose]?.tags?.split(",").map(t => t.trim()) || []),
     ].filter(Boolean);
     if (allPoseTags.length) {
-      const existingTags = new Set(parts.join(", ").toLowerCase().split(",").map(t => t.trim()));
-      const newTags = allPoseTags.filter(t => !existingTags.has(t.toLowerCase()));
-      if (newTags.length) parts.push(newTags.join(", "));
+      const qualitySet = new Set(QUALITY_TAGS.split(",").map(t => t.trim().toLowerCase()));
+      const seen = new Set();
+      const tags = allPoseTags.filter(t => {
+        const k = t.toLowerCase();
+        return !qualitySet.has(k) && (seen.has(k) ? false : seen.add(k));
+      });
+      if (tags.length) parts.push(tags.join(", "));
     }
 
     // 8. Vibe — excluded from prompt (codex field, not a prompt tag)

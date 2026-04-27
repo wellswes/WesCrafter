@@ -21,14 +21,19 @@ export default function ImportPanel({
   onSceneBreaksDone,
   onClose,
 }) {
-  const [steps,             setSteps]             = useState(freshState);
-  const [msgs,              setMsgs]              = useState({});
-  const [errors,            setErrors]            = useState({});
-  const [sceneBreakResult,  setSceneBreakResult]  = useState(null);
-  const [scenesExpanded,    setScenesExpanded]    = useState(false);
-  const [splitConfirming,   setSplitConfirming]   = useState(false);
-  const [splitDone,         setSplitDone]         = useState(false);
-  const [splitErr,          setSplitErr]          = useState(null);
+  const [steps,              setSteps]              = useState(freshState);
+  const [msgs,               setMsgs]               = useState({});
+  const [errors,             setErrors]             = useState({});
+  const [sceneBreakResult,   setSceneBreakResult]   = useState(null);
+  const [scenesExpanded,     setScenesExpanded]     = useState(false);
+  const [splitConfirming,    setSplitConfirming]    = useState(false);
+  const [splitDone,          setSplitDone]          = useState(false);
+  const [splitErr,           setSplitErr]           = useState(null);
+  const [pendingTitle,       setPendingTitle]       = useState("");
+  const [pendingSummary,     setPendingSummary]     = useState("");
+  const [summaryApproved,    setSummaryApproved]    = useState(false);
+  const [summaryApproving,   setSummaryApproving]   = useState(false);
+  const [summaryApproveErr,  setSummaryApproveErr]  = useState(null);
 
   // Reset all step state when chapter changes
   useEffect(() => {
@@ -39,6 +44,11 @@ export default function ImportPanel({
     setSplitConfirming(false);
     setSplitDone(false);
     setSplitErr(null);
+    setPendingTitle("");
+    setPendingSummary("");
+    setSummaryApproved(false);
+    setSummaryApproving(false);
+    setSummaryApproveErr(null);
   }, [chapterId]);
 
   const setStep = (key, val) => setSteps(p => ({ ...p, [key]: val }));
@@ -64,6 +74,8 @@ export default function ImportPanel({
     setStep("sceneBreaks", "running");
     setErr("sceneBreaks", null);
     setSceneBreakResult(null);
+    setSummaryApproved(false);
+    setSummaryApproveErr(null);
     try {
       const res = await fetch(
         "https://gjvegoinppbpfusttycs.supabase.co/functions/v1/break-scenes",
@@ -76,11 +88,35 @@ export default function ImportPanel({
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setSceneBreakResult(data);
+      setPendingTitle(data.chapter_title || "");
+      setPendingSummary(data.context_summary || "");
       setStep("sceneBreaks", "done");
-      if (onSceneBreaksDone) onSceneBreaksDone(data);
+      // onSceneBreaksDone called after summary approval, not here
     } catch (e) {
       setErr("sceneBreaks", e.message);
       setStep("sceneBreaks", "error");
+    }
+  };
+
+  const approveSummary = async () => {
+    setSummaryApproving(true);
+    setSummaryApproveErr(null);
+    try {
+      const { error } = await supabase
+        .from("chapters")
+        .update({ title: pendingTitle, context_summary: pendingSummary })
+        .eq("id", chapterId);
+      if (error) throw error;
+      setSummaryApproved(true);
+      if (onSceneBreaksDone) onSceneBreaksDone({
+        ...sceneBreakResult,
+        chapter_title: pendingTitle,
+        context_summary: pendingSummary,
+      });
+    } catch (e) {
+      setSummaryApproveErr(e.message);
+    } finally {
+      setSummaryApproving(false);
     }
   };
 
@@ -151,6 +187,8 @@ export default function ImportPanel({
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",
+      maxHeight: "calc(100vh - 100px)",
+      overflowY: "auto",
     }}>
 
       {/* Header */}
@@ -223,14 +261,41 @@ export default function ImportPanel({
                   display: "flex", alignItems: "center", gap: 5,
                 }}>
                   {s.label}
+                  {s.key === "sceneBreaks" && isDone && !summaryApproved && (
+                    <span style={{ fontSize:8, color:"var(--gold)", fontFamily:"sans-serif", opacity:0.8 }}>review</span>
+                  )}
                 </div>
 
                 {/* Scene breaks result */}
                 {s.key === "sceneBreaks" && isDone && sceneBreakResult && (
                   <div style={{ marginTop:4 }}>
-                    <div style={{ fontSize:9, color:"#6dbf8a", fontFamily:"sans-serif", marginBottom:2 }}>
-                      {sceneBreakResult.chapter_title}
-                    </div>
+                    {/* Editable title — shown until approved */}
+                    {!summaryApproved ? (
+                      <input
+                        value={pendingTitle}
+                        onChange={e => setPendingTitle(e.target.value)}
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          width: "100%",
+                          boxSizing: "border-box",
+                          background: "var(--bg4)",
+                          border: "1px solid var(--border2)",
+                          borderRadius: 3,
+                          color: "#6dbf8a",
+                          fontSize: 9,
+                          fontFamily: "sans-serif",
+                          padding: "3px 5px",
+                          marginBottom: 4,
+                          outline: "none",
+                        }}
+                      />
+                    ) : (
+                      <div style={{ fontSize:9, color:"#6dbf8a", fontFamily:"sans-serif", marginBottom:2 }}>
+                        {pendingTitle}
+                      </div>
+                    )}
+
+                    {/* Scene list */}
                     <div
                       onClick={e => { e.stopPropagation(); setScenesExpanded(v => !v); }}
                       style={{ display:"flex", alignItems:"center", gap:3, cursor:"pointer", userSelect:"none" }}
@@ -247,6 +312,64 @@ export default function ImportPanel({
                         {i + 1}. {sc.title} <span style={{ opacity:0.5 }}>({sc.beat_count})</span>
                       </div>
                     ))}
+
+                    {/* Context summary review */}
+                    {!summaryApproved ? (
+                      <div style={{ marginTop:6 }}>
+                        <div style={{ fontSize:9, color:"var(--gold)", fontFamily:"sans-serif", marginBottom:3, opacity:0.8 }}>
+                          Context summary
+                        </div>
+                        <textarea
+                          value={pendingSummary}
+                          onChange={e => setPendingSummary(e.target.value)}
+                          onClick={e => e.stopPropagation()}
+                          rows={7}
+                          style={{
+                            width: "100%",
+                            boxSizing: "border-box",
+                            background: "var(--bg4)",
+                            border: "1px solid var(--border2)",
+                            borderRadius: 3,
+                            color: "var(--text)",
+                            fontSize: 8,
+                            fontFamily: "sans-serif",
+                            padding: "4px 5px",
+                            resize: "vertical",
+                            lineHeight: 1.5,
+                            marginBottom: 4,
+                            outline: "none",
+                          }}
+                        />
+                        <button
+                          onClick={e => { e.stopPropagation(); approveSummary(); }}
+                          disabled={summaryApproving}
+                          style={{
+                            width: "100%",
+                            background: "none",
+                            border: "1px solid var(--gold2)",
+                            borderRadius: 3,
+                            cursor: summaryApproving ? "default" : "pointer",
+                            padding: "3px 0",
+                            fontSize: 9,
+                            fontFamily: "sans-serif",
+                            color: "var(--gold)",
+                            opacity: summaryApproving ? 0.5 : 1,
+                          }}
+                        >
+                          {summaryApproving ? "Saving…" : "Approve & Commit"}
+                        </button>
+                        {summaryApproveErr && (
+                          <div style={{ fontSize:9, color:"#c07060", fontFamily:"sans-serif", marginTop:3 }}>
+                            {summaryApproveErr}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize:9, color:"#6dbf8a", fontFamily:"sans-serif", marginTop:4 }}>
+                        ✓ Summary committed
+                      </div>
+                    )}
+
                     {/* Split suggestion */}
                     {sceneBreakResult.split_suggested && !splitDone && (
                       <div style={{ marginTop:8, background:"#1a1400", border:"1px solid #4a3800", borderRadius:4, padding:"8px 10px" }}>
